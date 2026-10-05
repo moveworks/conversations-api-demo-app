@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moveworks-capi-demo-app"
+version = "0.1.0"
+description = "Demo chat surface over the Moveworks Conversations API, built on the starter"
+readme = "README.md"
+license = { file = "LICENSE.txt" }
+requires-python = ">=3.10"
+authors = [{ name = "Moveworks, Inc." }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Communications :: Chat",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+  "moveworks-capi-starter @ git+https://github.com/moveworks/conversations-api-starter@v0.1.0",
+  "fastapi>=0.110,<1",
+  "uvicorn>=0.29,<1",
+  "requests>=2.31,<3",
+  "python-dotenv>=1.0,<2",
+]
+
+[project.urls]
+Homepage = "https://github.com/moveworks/conversations-api-demo-app"
+Documentation = "https://docs.moveworks.com/api-reference/conversations-api"
+Source = "https://github.com/moveworks/conversations-api-demo-app"
+Issues = "https://github.com/moveworks/conversations-api-demo-app/issues"
+Changelog = "https://github.com/moveworks/conversations-api-demo-app/blob/main/CHANGELOG.md"
+Starter = "https://github.com/moveworks/conversations-api-starter"
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8",
+  # Starlette's TestClient uses httpx2 where supported and httpx on older releases.
+  "httpx>=0.27",
+  "httpx2>=2.13",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

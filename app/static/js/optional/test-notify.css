@@ -1,0 +1,20 @@
+.test-notify {
+  display: flex; flex-direction: column; gap: 8px;
+  border: 1px dashed var(--line); border-radius: var(--radius); padding: 12px; margin: 4px 0 14px;
+}
+.tn-title { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+.tn-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); }
+.tn-field input, .tn-field textarea, .tn-row select {
+  font: inherit; font-size: 13px; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+}
+.tn-field input, .tn-field textarea { width: 100%; min-width: 0; }
+.tn-field textarea { resize: vertical; }
+.tn-row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.tn-warn { margin: 0; font-size: 12px; line-height: 1.45; color: var(--ink); border-left: 3px solid var(--ink-2); padding-left: 8px; }
+.tn-status { margin: 0; font-size: 12px; line-height: 1.45; color: var(--ink-2); min-height: 1em; }
+.test-notify.unconfigured .tn-field, .test-notify.unconfigured .tn-row { opacity: 0.5; }
+.tn-badge {
+  display: inline-block; margin-top: 6px; font-family: var(--mono); font-size: 10px;
+  color: var(--live); border: 1px solid var(--live); border-radius: 999px; padding: 1px 7px;
+}

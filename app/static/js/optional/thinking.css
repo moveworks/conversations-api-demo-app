@@ -1,0 +1,30 @@
+/* Optional reasoning trail (js/optional/thinking.js). */
+.turn > .thinking { order: -1; }
+.thinking {
+  font-size: 13px;
+  color: var(--ink-2);
+  border-left: 2px solid var(--line);
+  padding: 2px 0 2px 12px;
+  margin: 0 0 8px 4px;
+  max-width: 86%;
+}
+.thinking-summary {
+  background: none; border: 0; padding: 0;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em;
+  color: var(--ink-2);
+}
+.thinking-summary::before { content: "▸ "; }
+.thinking.open .thinking-summary::before { content: "▾ "; }
+.thinking.active .thinking-summary { color: var(--cobalt); }
+.trail-wrap { overflow: hidden; transition: max-height 0.35s ease, opacity 0.25s ease; }
+.thinking:not(.open) .trail-wrap { opacity: 0; }
+.thinking .trail { margin-top: 6px; }
+.thinking .step { display: flex; gap: 8px; align-items: baseline; padding: 1.5px 0; animation: step-in 0.25s ease; }
+@keyframes step-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; } }
+.thinking .step .mark { font-family: var(--mono); font-size: 11px; width: 14px; flex: none; }
+.thinking .step.done .mark { color: var(--live); }
+.thinking .step.now .mark { color: var(--cobalt); }
+.thinking .step.now { color: var(--ink); }
+.thinking .step.head { font-weight: 600; color: var(--ink); }
+@media (max-width: 860px) { .thinking { max-width: 94%; } }
+@media (prefers-reduced-motion: reduce) { .trail-wrap, .thinking .step { transition: none; animation: none; } }

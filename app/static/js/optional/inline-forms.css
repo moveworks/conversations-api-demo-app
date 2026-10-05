@@ -1,0 +1,4 @@
+/* Optional inline form placement (js/optional/inline-forms.js). */
+.answer-part + .answer-part, .inline-form-slot + .answer-part { margin-top: 0.7em; }
+.inline-form-slot.form-cards { max-width: none; margin: 0.8em 0 0; }
+.inline-form-slot:empty { display: none; }
