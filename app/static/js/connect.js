@@ -1,7 +1,7 @@
 import { getJson, postJson } from "./api.js";
 import { $, emit } from "./dom.js";
 import { state } from "./state.js";
-import { chatLog } from "./chat.js";
+import { chatLog, resetChat } from "./chat.js";
 import { loadConversations } from "./conversations.js";
 import { closeNotifications, connectNotifications } from "./notifications.js";
 
@@ -55,6 +55,7 @@ function enterApp(botName, baseUrl) {
 export async function disconnect() {
   await postJson("/api/disconnect", {});
   closeNotifications();
+  resetChat();
   state.conversationId = null;
   chatLog.replaceChildren();
   $("chat-empty").hidden = false;

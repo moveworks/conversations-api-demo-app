@@ -49,6 +49,7 @@ $("composer").addEventListener("submit", (e) => {
   input.value = "";
   autosizeComposer();
   sendMessage({ text, echo: text });
+  input.focus();
 });
 
 function applyTheme(mode) {

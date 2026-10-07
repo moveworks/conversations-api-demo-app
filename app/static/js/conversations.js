@@ -4,7 +4,7 @@ import { hooks } from "./hooks.js";
 import { scrollDown, stickToBottom } from "./scroll.js";
 import { state } from "./state.js";
 import { toast } from "./toast.js";
-import { addTurn, addUserBubble, chatLog, renderAssistantMessage } from "./chat.js";
+import { addTurn, addUserBubble, chatLog, resetChat, renderAssistantMessage } from "./chat.js";
 
 const PAGE = 20;
 let showArchived = false;
@@ -192,6 +192,7 @@ function renderMessages(messages, id, into) {
 }
 
 export async function openConversation(id) {
+  resetChat();
   state.conversationId = id;
   markActiveConversation();
   if (window.innerWidth <= 1000) $("conv-sidebar").hidden = true;
@@ -255,6 +256,7 @@ function olderButton(id, cursor) {
 }
 
 export function startNewConversation() {
+  resetChat();
   state.conversationId = null;
   markActiveConversation();
   chatLog.replaceChildren();

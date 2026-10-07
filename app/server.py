@@ -26,11 +26,11 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -53,6 +53,17 @@ except ImportError:  # pragma: no cover - exercised by deleting the module
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Without a Cache-Control header browsers guess freshness from Last-Modified
+# and keep running old JS after an edit; revalidating costs only a 304.
+REVALIDATE = {"Cache-Control": "no-cache"}
+
+
+class RevalidatedStaticFiles(StaticFiles):
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers.update(REVALIDATE)
+        return response
 HOST = "127.0.0.1"
 LOCAL_HOSTNAMES = {"127.0.0.1", "localhost"}
 
@@ -163,11 +174,11 @@ def build_app() -> FastAPI:
                 return JSONResponse({"detail": "Send JSON."}, status_code=415)
         return await call_next(request)
 
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.mount("/static", RevalidatedStaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get("/")
     async def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+        return FileResponse(STATIC_DIR / "index.html", headers=REVALIDATE)
 
     @app.get("/api/session")
     async def get_session() -> dict:

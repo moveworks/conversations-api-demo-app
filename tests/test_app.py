@@ -55,6 +55,15 @@ class TestSecurity:
         assert resp.status_code == 200
 
 
+class TestCaching:
+    def test_page_and_static_files_revalidate(self, local):
+        for path in ("/", "/static/js/chat.js", "/static/styles.css"):
+            assert local.get(path).headers["cache-control"] == "no-cache", path
+
+    def test_api_responses_keep_their_own_headers(self, local):
+        assert "cache-control" not in local.get("/api/session").headers
+
+
 def _form_message() -> dict:
     intro = "I also found a **Corp VPN** form ."
     return {

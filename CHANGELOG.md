@@ -4,6 +4,9 @@ All notable changes to this project are recorded here. The project is versioned 
 
 ## Unreleased
 
+- Messages sent while a reply is still arriving are queued and sent in order, instead of locking the composer. Switching or starting a conversation, or disconnecting, cancels the reply in progress and clears the queue. If a send fails, the messages still waiting are marked "Not sent".
+- The page and static files are served with `Cache-Control: no-cache`, so a browser picks up edited JavaScript and CSS on reload.
+
 ## 0.1.0
 
 First tagged release.
