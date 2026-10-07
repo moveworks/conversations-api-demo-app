@@ -239,6 +239,9 @@ button { font: inherit; cursor: pointer; }
   overflow-wrap: break-word;
 }
 .turn.user .bubble { background: var(--cobalt); color: #fff; border-bottom-right-radius: 4px; }
+.turn.user.queued .bubble { opacity: 0.55; }
+.turn.user .send-status { font-size: 0.75rem; color: var(--ink-2); margin-top: 4px; }
+.turn.user.unsent .send-status { color: var(--danger); }
 .turn.assistant .bubble { background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
 
 .bubble p { margin: 0 0 0.7em; } .bubble p:last-child { margin-bottom: 0; }

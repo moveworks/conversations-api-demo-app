@@ -1,3 +1,4 @@
+import { $ } from "./dom.js";
 import { hooks } from "./hooks.js";
 import { renderMarkdown } from "./markdown.js";
 import { scrollDown } from "./scroll.js";
@@ -26,8 +27,10 @@ export function actionChip(action, ref) {
   btn.textContent = action.label;
   if (action.type === "CALLBACK_ACTION" && action.callback_id) {
     btn.addEventListener("click", () => {
+      if (btn.classList.contains("chosen")) return;
       lockActionRow(btn);
       sendMessage({ callbackId: action.callback_id, echo: action.label });
+      $("chat-input").focus();
     });
   } else if (action.type === "MODAL_ACTION" && action.modal_id) {
     btn.addEventListener("click", () => openModal({ ...ref, modal_id: action.modal_id }, action.label, btn));

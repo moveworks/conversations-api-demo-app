@@ -34,9 +34,10 @@ export function addUserBubble(text, into = chatLog, files = []) {
     b.appendChild(chip);
   }
   turn.appendChild(b);
-  if (into !== chatLog) return;
+  if (into !== chatLog) return turn;
   stickToBottom();
   scrollDown();
+  return turn;
 }
 
 export function addErrorLine(text) {
@@ -102,12 +103,58 @@ function initials(name) {
   return el;
 }
 
-export async function sendMessage({ text, callbackId, echo }) {
-  if (echo) addUserBubble(echo);
-  $("chat-input").disabled = true;
-  $("send-btn").disabled = true;
+// The API answers one response at a time per conversation, so messages sent
+// while a reply is still arriving wait here and go out in order.
+const queue = [];
+let inFlight = null;
 
+export function sendMessage({ text, callbackId, echo }) {
+  const bubble = echo ? addUserBubble(echo) : null;
+  if (bubble && inFlight) setStatus(bubble, "queued", "Queued");
+  queue.push({ text, callbackId, bubble });
+  if (!inFlight) drain();
+}
+
+// Leaving a conversation abandons its reply and anything still waiting.
+export function resetChat() {
+  queue.length = 0;
+  if (inFlight) inFlight.abort();
+  inFlight = null;
+}
+
+async function drain() {
+  while (queue.length) {
+    const next = queue.shift();
+    if (next.bubble) setStatus(next.bubble, null);
+    const controller = new AbortController();
+    inFlight = controller;
+    const sent = await runMessage(next, controller.signal);
+    if (inFlight !== controller) return;
+    inFlight = null;
+    // A failed send likely fails the rest too, and a follow-up could land in
+    // a new conversation without its context, so stop instead of draining.
+    if (!sent) {
+      for (const waiting of queue.splice(0)) if (waiting.bubble) setStatus(waiting.bubble, "unsent", "Not sent");
+      return;
+    }
+  }
+}
+
+function setStatus(turn, kind, label) {
+  turn.classList.remove("queued", "unsent");
+  turn.querySelector(".send-status")?.remove();
+  if (!kind) return;
+  turn.classList.add(kind);
+  const status = document.createElement("span");
+  status.className = "send-status";
+  status.textContent = label;
+  turn.appendChild(status);
+}
+
+async function runMessage({ text, callbackId }, signal) {
   const turn = addTurn("assistant");
+  // Waiting messages stay below the reply they wait for.
+  for (const waiting of queue) if (waiting.bubble) chatLog.appendChild(waiting.bubble);
   const thinking = hooks.thinking ? hooks.thinking(turn) : null;
   const ctx = { turn, thinking, bubble: null };
 
@@ -116,19 +163,18 @@ export async function sendMessage({ text, callbackId, echo }) {
       text: text || null,
       callback_id: callbackId || null,
       conversation_id: state.conversationId,
-    });
+    }, signal);
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
       throw new Error(apiDetail(body, `request failed (${resp.status})`));
     }
     await readEventStream(resp, (frame) => handleFrame(frame, ctx));
+    return true;
   } catch (e) {
-    addErrorLine(String(e.message || e));
+    if (e.name !== "AbortError") addErrorLine(String(e.message || e));
+    return false;
   } finally {
     if (thinking) thinking.finish();
-    $("chat-input").disabled = false;
-    $("send-btn").disabled = false;
-    $("chat-input").focus();
   }
 }
 
