@@ -106,10 +106,10 @@ class TestPresentMessage:
         assert [(a["label"], a["type"]) for a in shown["actions"]] == [
             ("File ticket", "CALLBACK_ACTION"),
             ("Edit/Add details", "MODAL_ACTION"),
-            ("Other help options", "URL_ACTION"),
+            ("Other help options", "HANDOFF_ACTION"),
         ]
-        # Smart handoff rides on actions; Message.handoff stays empty.
-        assert shown["handoff"] == []
+        # The HANDOFF_ACTION opens the menu carried on the same message.
+        assert [i["title"] for i in shown["handoff"][0]["items"]] == ["File an IT ticket", "Start agent chat"]
         assert shown["feedback"] == {"helpful": "callback_fixture", "unhelpful": "callback_fixture"}
         assert shown["text"].startswith("I understand you’d like to file a ticket")
 
@@ -170,6 +170,35 @@ class TestPresentMessage:
         shown = present.present_message(message, resolve_links=False)
 
         assert not any("form" in a for a in shown["actions"])
+
+    def test_omitted_handoff_action_keeps_form_links_paired(self, offline_short_links):
+        offline_short_links.update(PORTAL_REDIRECTS)
+        message = json.loads((FIXTURES / "portal_form_message.json").read_text())
+        message["actions"].insert(0, {"type": "HANDOFF_ACTION", "label": "Other help options", "handoff_action": {}})
+
+        shown = present.present_message(message)
+
+        assert [a["type"] for a in shown["actions"]] == ["URL_ACTION"] * 3
+        assert shown["actions"][0]["form"]["title"] == "401(k) Retirement Plan Inquiry"
+
+    def test_handoff_action_with_only_empty_categories_is_omitted(self):
+        message = json.loads((FIXTURES / "smart_handoff_message.json").read_text())
+        message["handoff"]["handoff_categories"][0]["handoff_items"] = []
+
+        assert "HANDOFF_ACTION" not in [a["type"] for a in present.present_message(message)["actions"]]
+
+    def test_handoff_action_without_handoff_options_is_omitted(self):
+        message = json.loads((FIXTURES / "smart_handoff_message.json").read_text())
+        del message["handoff"]
+
+        shown = present.present_message(message)
+
+        assert [a["type"] for a in shown["actions"]] == ["CALLBACK_ACTION", "MODAL_ACTION"]
+
+    def test_agent_avatar_must_be_https(self):
+        for url in ("http://example.com/dana.png", "javascript:alert(1)", "data:image/png;base64,AAAA", None):
+            sender = present.present_sender({"display_name": "Dana Fielding", "avatar_url": url})
+            assert sender == {"display_name": "Dana Fielding", "avatar_url": ""}
 
     def test_live_agent_messages_carry_the_agent_identity(self):
         # Shape per the API reference.
@@ -369,7 +398,7 @@ class TestTurns:
 
         frames = _frames(asyncio.run(collect()))
 
-        assert [event for event, _ in frames] == ["conversation", "delta", "completed", "actions", "feedback_ids"]
+        assert [event for event, _ in frames] == ["conversation", "delta", "completed", "actions", "handoff", "feedback_ids"]
         assert client.posts[0] == ("/rest/v1/conversations", {"title": "file a ticket"})
         assert client.posts[1] == ("/rest/v1/conversations/conv_new/responses", {"input": {"chat": {"text": "file a ticket"}}})
         assert frames[1][1]["output_type"] == "MESSAGE"

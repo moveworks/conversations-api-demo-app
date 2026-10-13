@@ -52,6 +52,8 @@ Requires Python 3.10 or later and a Moveworks instance with the Conversations AP
 
 6. On the connect screen, choose a data center and paste the chatbot's Bot Name and an HTTP Connector API key. The server holds the key in memory only, never on disk or in browser storage.
 
+Live agent replies show the agent's name and picture when the API sends `sender_info`, and "Live agent" otherwise. The starter's [API usage notes](https://github.com/moveworks/conversations-api-starter#api-usage-notes) list the ServiceNow and Moveworks settings that `sender_info` needs.
+
 The app runs locally with one connected Moveworks instance per process. It binds to `127.0.0.1`, has no login, and rejects requests with a non-local `Host`, cross-origin writes, and non-JSON writes, so other websites cannot drive it through your browser. Do not expose it on a network.
 
 To run the offline tests:
