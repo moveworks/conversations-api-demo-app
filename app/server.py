@@ -45,6 +45,11 @@ from app.frames import sse_frame
 from app.present import present_message, present_modal, present_notification_text
 from app.turns import run_turn
 
+try:  # Optional: delete app/wire_capture.py (with js/optional/wire.js) to drop the expandable wire rows.
+    from app import wire_capture
+except ImportError:  # pragma: no cover - exercised by deleting the module
+    wire_capture = None
+
 try:  # Optional: delete app/test_notifications.py to drop the "send a test notification" panel.
     from app.test_notifications import register as register_test_notifications
 except ImportError:  # pragma: no cover - exercised by deleting the module
@@ -197,11 +202,14 @@ def build_app() -> FastAPI:
         if not (base_url.startswith("https://") and bot_name and api_key):
             raise HTTPException(status_code=400, detail="All three fields are required, and the base URL must start with https://.")
 
+        if wire_capture:
+            wire_capture.hub.clear()
         client = ConversationsApiClient(
             base_url=base_url,
             bot_name=bot_name,
             bearer_provider=ApiKeyBearer(api_key),
             max_retries=3,
+            session=wire_capture.RecordingSession() if wire_capture else None,
         )
         # Prove the credential before entering chat: cheapest real call.
         try:
@@ -228,6 +236,8 @@ def build_app() -> FastAPI:
     @app.post("/api/disconnect")
     async def disconnect() -> dict:
         session.reset()
+        if wire_capture:
+            wire_capture.hub.clear()
         return {"connected": False}
 
     @app.post("/api/message")
@@ -236,8 +246,9 @@ def build_app() -> FastAPI:
         if bool(body.text) == bool(body.callback_id):
             raise HTTPException(status_code=400, detail="Send either text or callback_id.")
         session.last_message_at = time.time()
+        frames = run_turn(session.client, body.conversation_id, body.text, body.callback_id, streaming=settings["streaming"])
         return StreamingResponse(
-            run_turn(session.client, body.conversation_id, body.text, body.callback_id, streaming=settings["streaming"]),
+            wire_capture.capture_turn(frames) if wire_capture else frames,
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -351,6 +362,8 @@ def build_app() -> FastAPI:
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    if wire_capture:
+        wire_capture.register(app)
     if register_test_notifications:
         register_test_notifications(app, session)
 
@@ -402,6 +415,8 @@ def _connect_error_hint(exc: Exception) -> str:
 async def _notifications_sse(request: Request) -> AsyncIterator[bytes]:
     queue: asyncio.Queue = asyncio.Queue()
     session.event_subscribers.append(queue)
+    if wire_capture:
+        wire_capture.hub.subscribe(queue)
     try:
         yield sse_frame("hello", {})
         while True:
@@ -411,6 +426,9 @@ async def _notifications_sse(request: Request) -> AsyncIterator[bytes]:
                 event = await asyncio.wait_for(queue.get(), timeout=15.0)
             except asyncio.TimeoutError:
                 yield sse_frame("heartbeat", {})
+                continue
+            if isinstance(event, bytes):  # a wire frame from app.wire_capture
+                yield event
                 continue
             message = (event.raw.get("event_payload") or {}).get("message") or {}
             yield sse_frame(
@@ -427,6 +445,8 @@ async def _notifications_sse(request: Request) -> AsyncIterator[bytes]:
                 },
             )
     finally:
+        if wire_capture:
+            wire_capture.hub.unsubscribe(queue)
         # A reconnect resets the session, so this queue may belong to the old one.
         if queue in session.event_subscribers:
             session.event_subscribers.remove(queue)

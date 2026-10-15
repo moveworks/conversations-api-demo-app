@@ -11,6 +11,8 @@ All notable changes to this project are recorded here. The project is versioned 
 - Built on `moveworks-capi-starter` 0.2.0: consent links are recognized by `url_action.purpose`.
 - A `URL_ACTION` whose URL is not `http` or `https`, including one inside a handoff item, is shown as unsupported instead of as a link.
 - Handoff items with no action or text, and categories left empty, are dropped, so an empty Get Help menu is never offered.
+- Wire pane rows expand to the full request and response of each API call: method, URL, headers, bodies, status, and the raw event stream of a streamed reply. Calls made outside a chat turn, such as event polling, history, and modals, appear too, and repeated event polls fold into one row. Credentials are redacted on the server, and bodies over 64 KB are truncated. Capture runs only while the wire pane module is loaded (`app/wire_capture.py`).
+- The submit-and-poll path (`--no-stream`) logs its `POST /responses` and polling calls in the wire pane.
 - A consent link already labeled "Connect ..." is no longer shown as "Connect Connect ...". After consent, the toast no longer asks for another message, since the original request resumes on its own and its result arrives in the conversation.
 
 ## 0.1.0

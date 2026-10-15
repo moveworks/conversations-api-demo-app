@@ -80,7 +80,15 @@ async def run_turn(
                 for frame in _answer_frames(final):
                     yield frame
         else:
-            final = await _submit_and_poll(client, conversation_id, text, callback_id)
+            yield wire("send", "POST /responses", (text or "")[:120] if text else f"callback_id={callback_id[:40]}...")
+            submitted = await asyncio.to_thread(
+                lambda: create_response(client, conversation_id, text, callback_id=callback_id)
+            )
+            yield wire("send", "GET /responses/{id}", "poll until complete")
+            final = await asyncio.to_thread(
+                wait_for_completion, client, conversation_id, submitted["response_id"],
+                timeout_seconds=STREAM_FALLBACK_TIMEOUT_SECONDS,
+            )
             for frame in _answer_frames(final):
                 yield frame
 
@@ -135,18 +143,6 @@ async def _create_conversation(client: ConversationsApiClient, text: Optional[st
     title = (text or "New conversation").strip().replace("\n", " ")[:80]
     created = await asyncio.to_thread(create_conversation, client, title=title)
     return created["conversation_id"]
-
-
-async def _submit_and_poll(
-    client: ConversationsApiClient, conversation_id: str, text: Optional[str], callback_id: Optional[str]
-) -> Response:
-    submitted = await asyncio.to_thread(
-        lambda: create_response(client, conversation_id, text, callback_id=callback_id)
-    )
-    return await asyncio.to_thread(
-        wait_for_completion, client, conversation_id, submitted["response_id"],
-        timeout_seconds=STREAM_FALLBACK_TIMEOUT_SECONDS,
-    )
 
 
 def _message_frames(conversation_id: str, final: Response):

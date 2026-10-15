@@ -12,6 +12,8 @@ let unread = 0;
 export function connectNotifications() {
   closeNotifications();
   source = new EventSource("/api/events");
+  // Calls made outside a chat turn, from the server's optional wire capture.
+  source.addEventListener("wire", (ev) => hooks.wire(JSON.parse(ev.data)));
   source.addEventListener("notification", (ev) => {
     const data = JSON.parse(ev.data);
     // Async follow-ups (ticket confirmations, live agent updates) arrive as

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import time
 from typing import AsyncIterator, Iterator, TypeVar
 
 T = TypeVar("T")
+
+_wire_ids = itertools.count(1)
 
 
 def sse_frame(event: str, data: dict) -> bytes:
@@ -15,10 +18,13 @@ def sse_frame(event: str, data: dict) -> bytes:
 
 
 def wire(direction: str, label: str, detail: str = "") -> bytes:
-    """One frame for the optional wire pane: what actually crossed the network."""
+    """One frame for the optional wire pane: what actually crossed the network.
+
+    The ``id`` lets ``app.wire_capture`` attach the full exchange to the row.
+    """
     return sse_frame(
         "wire",
-        {"t": round(time.time() % 100000, 2), "dir": direction, "label": label, "detail": detail[:220]},
+        {"id": f"w{next(_wire_ids)}", "t": round(time.time() % 100000, 2), "dir": direction, "label": label, "detail": detail[:220]},
     )
 
 
