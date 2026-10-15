@@ -46,7 +46,7 @@ def present_message(message: Dict[str, Any], *, response_id: str = "", resolve_l
     actions = []
     for i, action in enumerate(message_actions(message)):
         # A HANDOFF_ACTION opens the message's handoff menu, so omit it when the message has no handoff options.
-        if action.type == "HANDOFF_ACTION" and not any(category["items"] for category in handoff):
+        if action.type == "HANDOFF_ACTION" and not handoff:
             continue
         shown = present_action(asdict(action))
         if i in forms:
@@ -89,7 +89,18 @@ def present_sender(sender_info: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
 
 
 def present_action(action: Dict[str, Any]) -> Dict[str, Any]:
-    return {**action, "label": clean_label(action.get("label", ""))}
+    """An action with a clean label. A ``URL_ACTION`` whose URL is not
+    ``http`` or ``https`` loses its URL, so the browser shows it as
+    unsupported rather than opening it."""
+    shown = {**action, "label": clean_label(action.get("label", ""))}
+    if shown.get("type") == "URL_ACTION" and not _is_web_url(shown.get("url") or ""):
+        shown["url"] = None
+        shown["is_auth_link"] = False
+    return shown
+
+
+def _is_web_url(url: str) -> bool:
+    return url.lower().startswith(("https://", "http://"))
 
 
 def present_sources(message: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -124,7 +135,11 @@ def present_sources(message: Dict[str, Any]) -> List[Dict[str, str]]:
 
 
 def present_handoff(handoff: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The Get Help menu from ``Message.handoff``, or an empty list."""
+    """The Get Help menu from ``Message.handoff``, or an empty list.
+
+    Items with no action or text, and categories left with no items, are
+    dropped, so an empty menu is never offered.
+    """
     categories = []
     for category in handoff.get("handoff_categories") or []:
         items = []
@@ -136,12 +151,15 @@ def present_handoff(handoff: Dict[str, Any]) -> List[Dict[str, Any]]:
             if content:
                 content_type = (content.get("type") or "").lower()
                 entry["text"] = normalize_markup((content.get(content_type) or {}).get("text", ""))
+            if not entry.get("action") and not entry.get("text"):
+                continue
             items.append(entry)
-        categories.append({
-            "name": clean_label(category.get("name", "")),
-            "description": normalize_markup(category.get("description", "")),
-            "items": items,
-        })
+        if items:
+            categories.append({
+                "name": clean_label(category.get("name", "")),
+                "description": normalize_markup(category.get("description", "")),
+                "items": items,
+            })
     return categories
 
 

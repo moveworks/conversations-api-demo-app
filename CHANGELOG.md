@@ -9,6 +9,9 @@ All notable changes to this project are recorded here. The project is versioned 
 - A `HANDOFF_ACTION` opens the message's `Message.handoff` menu from its place in the actions row, and is omitted when the message has no handoff options. It was shown as an unsupported action.
 - The live agent avatar from `sender_info.avatar_url` is shown only for an `https` URL and is loaded with no referrer.
 - Built on `moveworks-capi-starter` 0.2.0: consent links are recognized by `url_action.purpose`.
+- A `URL_ACTION` whose URL is not `http` or `https`, including one inside a handoff item, is shown as unsupported instead of as a link.
+- Handoff items with no action or text, and categories left empty, are dropped, so an empty Get Help menu is never offered.
+- A consent link already labeled "Connect ..." is no longer shown as "Connect Connect ...". After consent, the toast no longer asks for another message, since the original request resumes on its own and its result arrives in the conversation.
 
 ## 0.1.0
 

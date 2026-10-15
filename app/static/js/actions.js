@@ -13,11 +13,12 @@ export function actionChip(action, ref) {
     a.href = action.url;
     a.target = "_blank";
     a.rel = "noopener";
-    a.textContent = action.is_auth_link ? `🔒 Connect ${action.label}` : action.label;
+    a.textContent = action.is_auth_link ? `🔒 ${consentLabel(action.label)}` : action.label;
     if (action.is_auth_link) {
-      // The assistant resumes the interrupted plugin on the user's next turn.
+      // The original request resumes after consent, and the result arrives
+      // as an event on this conversation, so nothing is resent.
       a.addEventListener("click", () => {
-        toast("Grant access in the new tab, then send your next message. The assistant picks up where it left off.");
+        toast("Grant access in the new tab. The assistant continues in this conversation once you do.");
       });
     }
     return a;
@@ -44,6 +45,10 @@ export function actionChip(action, ref) {
     btn.title = "This action type is not supported by this app.";
   }
   return btn;
+}
+
+function consentLabel(label) {
+  return /^connect\b/i.test(label) ? label : `Connect ${label}`;
 }
 
 export async function renderActions(turn, data) {

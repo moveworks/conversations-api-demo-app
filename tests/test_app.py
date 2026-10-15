@@ -232,6 +232,46 @@ class TestPresentMessage:
         assert menu[0]["items"][0]["action"]["modal_id"] == "modal_1"
         assert menu[0]["items"][1]["text"] == "See [hours](https://example.com)"
 
+    def test_empty_handoff_items_and_categories_are_dropped(self):
+        message = json.loads((FIXTURES / "smart_handoff_message.json").read_text())
+        message["handoff"]["handoff_categories"] = [
+            {"category_id": "it", "name": "IT", "handoff_items": [
+                {"title": "Nothing here", "type": "TEXT"},
+                {"title": "Hours", "type": "TEXT", "text": {"type": "MARKDOWN_TEXT", "markdown_text": {"text": "9 to 5"}}},
+            ]},
+            {"category_id": "hr", "name": "HR", "handoff_items": [{"title": "Empty", "type": "ACTION"}]},
+        ]
+
+        shown = present.present_message(message)
+
+        assert [c["name"] for c in shown["handoff"]] == ["IT"]
+        assert [i["title"] for i in shown["handoff"][0]["items"]] == ["Hours"]
+        assert "HANDOFF_ACTION" in [a["type"] for a in shown["actions"]]
+
+        message["handoff"]["handoff_categories"] = message["handoff"]["handoff_categories"][1:]
+        shown = present.present_message(message)
+
+        assert shown["handoff"] == []
+        assert "HANDOFF_ACTION" not in [a["type"] for a in shown["actions"]]
+
+    def test_url_action_must_be_a_web_url(self):
+        for url in ("javascript:alert(1)", "data:text/html,hi", "mailto:help@example.com", ""):
+            shown = present.present_action({"type": "URL_ACTION", "label": "Open", "url": url, "is_auth_link": True})
+            assert shown["url"] is None
+            assert shown["is_auth_link"] is False
+        for url in ("https://example.com/a", "HTTP://example.com/b"):
+            assert present.present_action({"type": "URL_ACTION", "label": "Open", "url": url})["url"] == url
+
+    def test_handoff_item_url_action_must_be_a_web_url(self):
+        message = {"handoff": {"handoff_categories": [{"name": "IT", "handoff_items": [
+            {"title": "Portal", "type": "ACTION", "action": {
+                "label": "Portal", "type": "URL_ACTION", "url_action": {"url": "javascript:alert(1)"}}},
+        ]}]}}
+
+        item = present.present_message(message)["handoff"][0]["items"][0]
+
+        assert item["action"]["url"] is None
+
     def test_modal_display_html_becomes_markdown(self):
         modal = {"title": ":memo: New request", "fields": [
             {"type": "DISPLAY", "display": {"text": {"style": "SUBTLE", "text": 'Having issues? <a href="https://example.com">Portal</a>'}}},
