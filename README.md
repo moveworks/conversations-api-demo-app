@@ -30,7 +30,7 @@ Requires Python 3.10 or later and a Moveworks instance with the Conversations AP
 
    On an older Python, the install in the next step fails with `File "setup.py" or "setup.cfg" not found`. Install Python 3.10 or later and create the virtual environment with it.
 
-3. Install the app as an editable install. This also installs the starter library from its `v0.1.0` tag, plus FastAPI and uvicorn.
+3. Install the app as an editable install. This also installs the starter library from its `v0.2.0` tag, plus FastAPI and uvicorn.
 
    ```bash
    pip install -e .

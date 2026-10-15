@@ -8,6 +8,7 @@ All notable changes to this project are recorded here. The project is versioned 
 - The page and static files are served with `Cache-Control: no-cache`, so a browser picks up edited JavaScript and CSS on reload.
 - A `HANDOFF_ACTION` opens the message's `Message.handoff` menu from its place in the actions row, and is omitted when the message has no handoff options. It was shown as an unsupported action.
 - The live agent avatar from `sender_info.avatar_url` is shown only for an `https` URL and is loaded with no referrer.
+- Built on `moveworks-capi-starter` 0.2.0: consent links are recognized by `url_action.purpose`.
 
 ## 0.1.0
 
