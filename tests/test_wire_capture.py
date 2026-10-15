@@ -99,6 +99,28 @@ class TestRedaction:
             "Assistant-Name": "Demo Bot", "Content-Type": "application/json",
         }
 
+    def test_token_fields_in_streamed_events_are_redacted(self):
+        clean = 'data: {"type":"RESPONSE_CREATED","response_id":"resp_1"}'
+        stream = "\n".join([
+            "event: message",
+            clean,
+            'data: {"type":"OUTPUT","output":{"access_token":"tok1","nested":{"clientSecret":"s1"}}}',
+            'data: {"type":"OUTPUT","refresh_token":"tok2","text":"cut off he',
+            "",
+        ])
+
+        shown = wire_capture.redact_stream(stream)
+
+        assert "tok1" not in shown and "s1" not in shown and "tok2" not in shown
+        assert shown.count("[redacted]") == 3
+        assert clean in shown.split("\n"), "events with nothing to redact stay byte-for-byte raw"
+        assert '"text":"cut off he' in shown
+
+    def test_json_error_code_stays_visible_in_text(self):
+        assert wire_capture.redact_text('{"error": {"code": "INVALID_JWT", "token_type": "Bearer"}}') == (
+            '{"error": {"code": "INVALID_JWT", "token_type": "Bearer"}}'
+        )
+
     def test_token_exchange_form_body_is_redacted(self):
         body = "grant_type=client_credentials&client_assertion=eyJhbGciOi.eyJzdWIi.c2ln&client_secret=s3cret&assertion=a1"
 

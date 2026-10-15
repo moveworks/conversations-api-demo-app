@@ -58,6 +58,7 @@ SECRET_PAIR = re.compile(
     r"(?i)(?<![\w-])([\w-]*(?:token|secret|password|assertion|signature|api[-_]?key|credential|code[-_]?verifier|jwt)[\w-]*"
     r"|code|sig)=[^&\s\"']+"
 )
+JSON_STRING_PAIR = re.compile(r'("([^"\\]+)"\s*:\s*)"(?:[^"\\]|\\.)*"?')
 
 
 def _normalized(name: str) -> str:
@@ -233,7 +234,7 @@ def exchange(
         record["response_headers"] = redact_headers(response.headers)
         if body is not None:
             record["streamed"] = True
-            record["response_body"] = _cap(redact_text(body), body_size)
+            record["response_body"] = _cap(redact_stream(body), body_size)
         else:
             record["response_body"] = format_body(response.content)
     return record
@@ -259,10 +260,34 @@ def _redact_pair(pair: str) -> str:
     return f"{name}={REDACTED}" if sep and is_secret_name(unquote_plus(name), form=True) else pair
 
 
+def _redact_json_pair(match: re.Match) -> str:
+    return f'{match.group(1)}"{REDACTED}"' if is_secret_name(match.group(2)) else match.group(0)
+
+
 def redact_text(text: str) -> str:
     text = JWT.sub(REDACTED, text)
     text = BEARER.sub(lambda m: f"{m.group(1)} {REDACTED}", text)
+    # JSON fields in text that does not parse whole, such as a truncated event.
+    text = JSON_STRING_PAIR.sub(_redact_json_pair, text)
     return SECRET_PAIR.sub(lambda m: f"{m.group(1)}={REDACTED}", text)
+
+
+def redact_stream(body: str) -> str:
+    """A raw SSE stream with each ``data:`` event's JSON redacted field by field."""
+    lines = []
+    for line in body.split("\n"):
+        prefix, sep, payload = line.partition("data:")
+        if sep and not prefix:
+            try:
+                event = json.loads(payload)
+            except ValueError:
+                event = None
+            redacted = _redact_fields(event)
+            if redacted != event:
+                # Rewritten only when a field was redacted, so clean events stay byte-for-byte raw.
+                line = f"data: {json.dumps(redacted, ensure_ascii=False)}"
+        lines.append(line)
+    return redact_text("\n".join(lines))
 
 
 def format_body(body: Any) -> str:
