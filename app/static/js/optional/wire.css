@@ -42,6 +42,13 @@
   margin-top: 8px;
   font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #6f78a8;
 }
+.wire-block-toggle {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit;
+}
+.wire-block-toggle:hover { color: #cfd6f0; }
+.wire-block-toggle::after { content: " ▸"; }
+.wire-block-toggle[aria-expanded="true"]::after { content: " ▾"; }
 .wire-copy {
   background: none; border: 1px solid var(--navy-line); border-radius: 4px;
   color: var(--navy-ink); font: 10px var(--mono); letter-spacing: 0; text-transform: none;

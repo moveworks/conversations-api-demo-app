@@ -170,19 +170,25 @@ function renderExchange(ex, number) {
     : `${ex.status} ${ex.reason || ""} · ${ex.elapsed_ms} ms`;
   head.append(request, outcome);
   box.appendChild(head);
-  box.appendChild(block("Request headers", headerText(ex.request_headers)));
+  box.appendChild(headersBlock("Request headers", ex.request_headers));
   if (ex.request_body) box.appendChild(block("Request body", ex.request_body));
-  if (ex.response_headers) box.appendChild(block("Response headers", headerText(ex.response_headers)));
+  if (ex.response_headers) box.appendChild(headersBlock("Response headers", ex.response_headers));
   if (ex.response_body) box.appendChild(block(ex.streamed ? "Response stream (raw events)" : "Response body", ex.response_body));
   return box;
 }
 
-function block(title, text) {
+// Headers are rarely needed, so they start collapsed behind their count.
+function headersBlock(title, headers) {
+  const count = Object.keys(headers || {}).length;
+  return block(`${title} (${count})`, headerText(headers), { collapsed: true });
+}
+
+function block(title, text, { collapsed = false } = {}) {
   const wrap = document.createElement("div");
   wrap.className = "wire-block";
   const head = document.createElement("div");
   head.className = "wire-block-head";
-  const name = document.createElement("span");
+  const name = document.createElement(collapsed ? "button" : "span");
   name.textContent = title;
   const copy = document.createElement("button");
   copy.type = "button";
@@ -201,6 +207,17 @@ function block(title, text) {
   head.append(name, copy);
   const pre = document.createElement("pre");
   pre.textContent = text;
+  if (collapsed) {
+    name.type = "button";
+    name.className = "wire-block-toggle";
+    name.setAttribute("aria-expanded", "false");
+    pre.hidden = true;
+    name.addEventListener("click", (e) => {
+      e.stopPropagation();
+      pre.hidden = !pre.hidden;
+      name.setAttribute("aria-expanded", String(!pre.hidden));
+    });
+  }
   wrap.append(head, pre);
   return wrap;
 }
