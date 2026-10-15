@@ -5,7 +5,7 @@
      motion        animated layout changes instead of snapping
      thinking      the reasoning trail (pairs with server app/streaming.py)
      inline-forms  form cards inside the answer (pairs with app/inline_forms.py)
-     wire          a pane showing every protocol frame as it crosses
+     wire          a pane showing every protocol frame as it crosses (pairs with app/wire_capture.py)
      test-notify   send yourself a proactive notification (pairs with app/test_notifications.py) */
 import "./optional/motion.js";
 import "./optional/thinking.js";

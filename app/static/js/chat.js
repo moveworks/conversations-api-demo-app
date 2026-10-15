@@ -79,9 +79,11 @@ function renderAgentHeader(turn, sender) {
   if (sender && sender.avatar_url) {
     const img = document.createElement("img");
     img.className = "agent-avatar";
-    img.src = sender.avatar_url;
     img.alt = "";
+    // Hosted by the live chat provider, outside this app.
+    img.referrerPolicy = "no-referrer";
     img.addEventListener("error", () => img.replaceWith(initials(name)));
+    img.src = sender.avatar_url;
     header.appendChild(img);
   } else {
     header.appendChild(initials(name));

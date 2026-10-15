@@ -30,7 +30,7 @@ Requires Python 3.10 or later and a Moveworks instance with the Conversations AP
 
    On an older Python, the install in the next step fails with `File "setup.py" or "setup.cfg" not found`. Install Python 3.10 or later and create the virtual environment with it.
 
-3. Install the app as an editable install. This also installs the starter library from its `v0.1.0` tag, plus FastAPI and uvicorn.
+3. Install the app as an editable install. This also installs the starter library from its `v0.2.0` tag, plus FastAPI and uvicorn.
 
    ```bash
    pip install -e .
@@ -52,6 +52,8 @@ Requires Python 3.10 or later and a Moveworks instance with the Conversations AP
 
 6. On the connect screen, choose a data center and paste the chatbot's Bot Name and an HTTP Connector API key. The server holds the key in memory only, never on disk or in browser storage.
 
+Live agent replies show the agent's name and picture when the API sends `sender_info`, and "Live agent" otherwise. The starter's [API usage notes](https://github.com/moveworks/conversations-api-starter#api-usage-notes) list the ServiceNow and Moveworks settings that `sender_info` needs.
+
 The app runs locally with one connected Moveworks instance per process. It binds to `127.0.0.1`, has no login, and rejects requests with a non-local `Host`, cross-origin writes, and non-JSON writes, so other websites cannot drive it through your browser. Do not expose it on a network.
 
 To run the offline tests:
@@ -72,7 +74,7 @@ Each behavior below is an optional module. To remove one, delete the listed file
 | **Streaming** | Replies arrive progressively over server-sent events; the reasoning trail updates live, then collapses as the answer starts. | Submit the message, poll until complete, render the answer at once. `--no-stream` does the same at runtime. | `app/streaming.py`, `app/static/js/optional/thinking.js` + `.css` |
 | **Inline forms** | Removes the plain-text copy of offered forms from the answer (see `rendering.layout_message` in the starter) and places the form cards as one group after the paragraph that first mentions a form, before the closing question. | The answer renders as sent, including the plain-text copy, and form cards render below the answer. | `app/inline_forms.py`, `app/static/js/optional/inline-forms.js` + `.css` |
 | **Motion** | Tweens height changes so large answer snapshots glide instead of jumping, keeps the view pinned to the bottom while they run, fades new blocks in, staggers form cards. Respects `prefers-reduced-motion`. | Every change applies instantly. | `app/static/js/optional/motion.js` + `.css` |
-| **Wire pane** | A side pane that logs every API call and stream event. | No pane, no Wire button. | `app/static/js/optional/wire.js` + `.css` |
+| **Wire pane** | A side pane that logs every API call and stream event. Click a call to expand the request and response as they crossed the network: method, URL, headers (collapsed until clicked), bodies, and the raw event stream of a streamed reply. Credentials are replaced with `[redacted]` on the server: the `Authorization` header, cookies, signatures, API keys, and any header, body field, or query parameter whose name contains token, secret, password, assertion, signature, API key, or credential, plus JWTs and bearer tokens anywhere in the text. Bodies over 64 KB are truncated. | No pane, no Wire button, and the server records no traffic. | `app/wire_capture.py`, `app/static/js/optional/wire.js` + `.css`, `tests/test_wire_capture.py` |
 | **Test notifications** | A panel at the top of the notifications drawer that sends you a proactive notification through an Agent Studio listener, then times its round trip back through the events API. Needs `MW_TEST_LISTENER_URL` (and `MW_TEST_LISTENER_SECRET` for a secured listener) in `.env`; see "Testing proactive notifications" below. | No panel; notifications arrive only when something else triggers them. | `app/test_notifications.py`, `app/static/js/optional/test-notify.js` + `.css` |
 
 ---

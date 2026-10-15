@@ -26,7 +26,7 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-  "moveworks-capi-starter @ git+https://github.com/moveworks/conversations-api-starter@v0.1.0",
+  "moveworks-capi-starter @ git+https://github.com/moveworks/conversations-api-starter@v0.2.0",
   "fastapi>=0.110,<1",
   "uvicorn>=0.29,<1",
   "requests>=2.31,<3",

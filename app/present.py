@@ -42,8 +42,12 @@ def present_message(message: Dict[str, Any], *, response_id: str = "", resolve_l
     actions are not rendered, such as streamed snapshots.
     """
     forms = form_link_citations(message) if resolve_links else {}
+    handoff = present_handoff(message.get("handoff") or {})
     actions = []
     for i, action in enumerate(message_actions(message)):
+        # A HANDOFF_ACTION opens the message's handoff menu, so omit it when the message has no handoff options.
+        if action.type == "HANDOFF_ACTION" and not handoff:
+            continue
         shown = present_action(asdict(action))
         if i in forms:
             shown["form"] = {"title": citation_label(forms[i]), "description": citation_summary(forms[i])}
@@ -59,7 +63,7 @@ def present_message(message: Dict[str, Any], *, response_id: str = "", resolve_l
         "layout": answer_layout(message) if answer_layout else None,
         "sources": present_sources(message),
         "actions": actions,
-        "handoff": present_handoff(message.get("handoff") or {}),
+        "handoff": handoff,
         "feedback": {
             "helpful": ((message.get("feedback") or {}).get("helpful") or {}).get("callback_id"),
             "unhelpful": ((message.get("feedback") or {}).get("unhelpful") or {}).get("callback_id"),
@@ -71,15 +75,32 @@ def present_sender(sender_info: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     """Who wrote a ``LIVE_AGENT`` message, or None.
 
     ``sender_info`` is the only name the API gives a human agent; an actor the
-    client does not recognise would otherwise read as the assistant.
+    client does not recognise would otherwise read as the assistant. The
+    avatar is hosted by the live chat provider, so only an ``https`` URL is
+    passed to the browser.
     """
     if not sender_info or not sender_info.get("display_name"):
         return None
-    return {"display_name": sender_info["display_name"], "avatar_url": sender_info.get("avatar_url") or ""}
+    avatar_url = sender_info.get("avatar_url") or ""
+    return {
+        "display_name": sender_info["display_name"],
+        "avatar_url": avatar_url if avatar_url.startswith("https://") else "",
+    }
 
 
 def present_action(action: Dict[str, Any]) -> Dict[str, Any]:
-    return {**action, "label": clean_label(action.get("label", ""))}
+    """An action with a clean label. A ``URL_ACTION`` whose URL is not
+    ``http`` or ``https`` loses its URL, so the browser shows it as
+    unsupported rather than opening it."""
+    shown = {**action, "label": clean_label(action.get("label", ""))}
+    if shown.get("type") == "URL_ACTION" and not _is_web_url(shown.get("url") or ""):
+        shown["url"] = None
+        shown["is_auth_link"] = False
+    return shown
+
+
+def _is_web_url(url: str) -> bool:
+    return url.lower().startswith(("https://", "http://"))
 
 
 def present_sources(message: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -98,6 +119,7 @@ def present_sources(message: Dict[str, Any]) -> List[Dict[str, str]]:
         display = citation.get("display") or {}
         title = citation_label(citation)
         url = citation.get("url") or ""
+        url = url if _is_web_url(url) else ""
         if (title, url) in seen:
             continue
         seen.add((title, url))
@@ -114,7 +136,11 @@ def present_sources(message: Dict[str, Any]) -> List[Dict[str, str]]:
 
 
 def present_handoff(handoff: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The Get Help menu from ``Message.handoff``, or an empty list."""
+    """The Get Help menu from ``Message.handoff``, or an empty list.
+
+    Items with no action or text, and categories left with no items, are
+    dropped, so an empty menu is never offered.
+    """
     categories = []
     for category in handoff.get("handoff_categories") or []:
         items = []
@@ -126,23 +152,37 @@ def present_handoff(handoff: Dict[str, Any]) -> List[Dict[str, Any]]:
             if content:
                 content_type = (content.get("type") or "").lower()
                 entry["text"] = normalize_markup((content.get(content_type) or {}).get("text", ""))
+            if not entry.get("action") and not entry.get("text"):
+                continue
             items.append(entry)
-        categories.append({
-            "name": clean_label(category.get("name", "")),
-            "description": normalize_markup(category.get("description", "")),
-            "items": items,
-        })
+        if items:
+            categories.append({
+                "name": clean_label(category.get("name", "")),
+                "description": normalize_markup(category.get("description", "")),
+                "items": items,
+            })
     return categories
 
 
 def present_modal(modal: Dict[str, Any]) -> Dict[str, Any]:
-    """A modal with its title and DISPLAY field text converted to Markdown."""
+    """A modal with its title and DISPLAY field text converted to Markdown.
+
+    A DISPLAY image or download whose URL is not ``http`` or ``https`` loses
+    its URL, so the browser does not load or link it.
+    """
     fields = []
     for field in modal.get("fields") or []:
         field = dict(field)
-        text = (field.get("display") or {}).get("text")
+        display = field.get("display") or {}
+        text = display.get("text")
         if field.get("type") == "DISPLAY" and isinstance(text, dict) and text.get("text"):
-            field["display"] = {**field["display"], "text": {**text, "text": modal_html_to_markdown(text["text"])}}
+            display = {**display, "text": {**text, "text": modal_html_to_markdown(text["text"])}}
+        for kind in ("image", "download"):
+            media = display.get(kind)
+            if field.get("type") == "DISPLAY" and isinstance(media, dict) and not _is_web_url(media.get("url") or ""):
+                display = {**display, kind: {**media, "url": ""}}
+        if display:
+            field["display"] = display
         fields.append(field)
     return {**modal, "title": clean_label(modal.get("title", "")), "fields": fields}
 
