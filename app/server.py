@@ -27,7 +27,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
-from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -173,7 +172,7 @@ def build_app() -> FastAPI:
     async def same_origin_json_writes(request: Request, call_next):
         if request.method in ("POST", "PATCH", "PUT", "DELETE"):
             origin = request.headers.get("origin")
-            if origin and urlparse(origin).hostname not in LOCAL_HOSTNAMES:
+            if origin and origin != f"{request.url.scheme}://{request.headers.get('host', '')}":
                 return JSONResponse({"detail": "Cross-origin request refused."}, status_code=403)
             if not request.headers.get("content-type", "").startswith("application/json"):
                 return JSONResponse({"detail": "Send JSON."}, status_code=415)
@@ -202,21 +201,27 @@ def build_app() -> FastAPI:
         if not (base_url.startswith("https://") and bot_name and api_key):
             raise HTTPException(status_code=400, detail="All three fields are required, and the base URL must start with https://.")
 
-        if wire_capture:
-            wire_capture.hub.clear()
+        recording = wire_capture.RecordingSession() if wire_capture else None
         client = ConversationsApiClient(
             base_url=base_url,
             bot_name=bot_name,
             bearer_provider=ApiKeyBearer(api_key),
             max_retries=3,
-            session=wire_capture.RecordingSession() if wire_capture else None,
+            session=recording,
         )
+        # From here the wire pane shows only this connection's calls, so a poll
+        # still in flight for the previous credential cannot reach it.
+        previous_generation = wire_capture.hub.generation if wire_capture else None
+        if wire_capture and recording:
+            wire_capture.hub.activate(recording.generation)
         # Prove the credential before entering chat: cheapest real call.
         try:
             await asyncio.to_thread(
                 lambda: client.get("/rest/v1/conversations", params={"limit": 1}).json()
             )
         except Exception as exc:
+            if wire_capture:
+                wire_capture.hub.activate(previous_generation)
             raise HTTPException(status_code=401, detail=_connect_error_hint(exc)) from exc
 
         session.reset()
@@ -237,7 +242,7 @@ def build_app() -> FastAPI:
     async def disconnect() -> dict:
         session.reset()
         if wire_capture:
-            wire_capture.hub.clear()
+            wire_capture.hub.activate(None)
         return {"connected": False}
 
     @app.post("/api/message")

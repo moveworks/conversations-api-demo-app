@@ -5,8 +5,8 @@
    bar. With app/wire_capture.py on the server, a row that made a call
    expands to the request and response as they crossed the network, with
    credentials redacted. It is a teaching and debugging aid, not part of a
-   chat surface. Delete this file and wire.css, plus the import in main.js,
-   to drop it. */
+   chat surface. Delete this file and wire.css, plus the import in main.js
+   and app/wire_capture.py, to drop it. */
 import { postJson } from "../api.js";
 import { $ } from "../dom.js";
 import { hooks, useStylesheet } from "../hooks.js";
@@ -50,8 +50,14 @@ const rows = new Map();
 let pending = [];
 let lastRow = null;
 
-// Turn on capture for this server; without app/wire_capture.py this 404s.
-postJson("/api/wire", { capture: true }).catch(() => {});
+// Capture runs while a page shows this pane: the server stops when the last
+// events stream closes, so ask again on load and around each connection.
+// Without app/wire_capture.py this 404s.
+function startCapture() {
+  postJson("/api/wire", { capture: true }).catch(() => {});
+}
+startCapture();
+document.addEventListener("app:connected", startCapture);
 
 hooks.wire = (frame) => {
   if (frame.attach) {
@@ -68,7 +74,7 @@ hooks.wire = (frame) => {
     }
   }
   const row = addRow(frame);
-  if (frame.id) rows.set(frame.id, row);
+  if (frame.id && frame.dir === "send") rows.set(frame.id, row);
   if (frame.exchange) addExchange(row, frame.exchange);
   else if (frame.dir === "send" && !frame.id) waitForExchange(row, frame.label);
 };
@@ -90,8 +96,12 @@ function addRow(frame) {
   summary.append(dir, label, detail);
   li.appendChild(summary);
   if (frame.background) li.classList.add("background");
+  if (frame.id) li.dataset.wireId = frame.id;
   log.appendChild(li);
-  while (log.children.length > MAX_ROWS) log.removeChild(log.firstChild);
+  while (log.children.length > MAX_ROWS) {
+    rows.delete(log.firstChild.dataset.wireId);
+    log.removeChild(log.firstChild);
+  }
   log.scrollTop = log.scrollHeight;
   lastRow = { li, summary, detail, label: frame.label, background: !!frame.background, exchanges: [], total: 0, panel: null };
   return lastRow;
@@ -234,4 +244,7 @@ function clear() {
   lastRow = null;
 }
 
-document.addEventListener("app:disconnected", clear);
+document.addEventListener("app:disconnected", () => {
+  clear();
+  startCapture();
+});

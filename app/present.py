@@ -119,6 +119,7 @@ def present_sources(message: Dict[str, Any]) -> List[Dict[str, str]]:
         display = citation.get("display") or {}
         title = citation_label(citation)
         url = citation.get("url") or ""
+        url = url if _is_web_url(url) else ""
         if (title, url) in seen:
             continue
         seen.add((title, url))
@@ -164,13 +165,24 @@ def present_handoff(handoff: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def present_modal(modal: Dict[str, Any]) -> Dict[str, Any]:
-    """A modal with its title and DISPLAY field text converted to Markdown."""
+    """A modal with its title and DISPLAY field text converted to Markdown.
+
+    A DISPLAY image or download whose URL is not ``http`` or ``https`` loses
+    its URL, so the browser does not load or link it.
+    """
     fields = []
     for field in modal.get("fields") or []:
         field = dict(field)
-        text = (field.get("display") or {}).get("text")
+        display = field.get("display") or {}
+        text = display.get("text")
         if field.get("type") == "DISPLAY" and isinstance(text, dict) and text.get("text"):
-            field["display"] = {**field["display"], "text": {**text, "text": modal_html_to_markdown(text["text"])}}
+            display = {**display, "text": {**text, "text": modal_html_to_markdown(text["text"])}}
+        for kind in ("image", "download"):
+            media = display.get(kind)
+            if field.get("type") == "DISPLAY" and isinstance(media, dict) and not _is_web_url(media.get("url") or ""):
+                display = {**display, kind: {**media, "url": ""}}
+        if display:
+            field["display"] = display
         fields.append(field)
     return {**modal, "title": clean_label(modal.get("title", "")), "fields": fields}
 

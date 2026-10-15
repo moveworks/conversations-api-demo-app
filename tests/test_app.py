@@ -50,6 +50,10 @@ class TestSecurity:
         resp = local.post("/api/disconnect", content="{}", headers={"Content-Type": "text/plain"})
         assert resp.status_code == 415
 
+    def test_another_local_port_is_a_different_origin(self, local):
+        resp = local.post("/api/disconnect", json={}, headers={"Origin": "http://127.0.0.1:9999"})
+        assert resp.status_code == 403
+
     def test_same_origin_json_post_is_served(self, local):
         resp = local.post("/api/disconnect", json={}, headers={"Origin": "http://127.0.0.1:8090"})
         assert resp.status_code == 200
@@ -271,6 +275,27 @@ class TestPresentMessage:
         item = present.present_message(message)["handoff"][0]["items"][0]
 
         assert item["action"]["url"] is None
+
+    def test_sources_link_only_web_urls(self):
+        message = {"citations": [
+            {"citation_id": "a", "url": "javascript:alert(1)", "display": {"title": {"markdown_text": {"text": "Bad"}}}},
+            {"citation_id": "b", "url": "https://example.com/kb", "display": {"title": {"markdown_text": {"text": "Good"}}}},
+        ]}
+
+        assert [(s["title"], s["url"]) for s in present.present_sources(message)] == [("Bad", ""), ("Good", "https://example.com/kb")]
+
+    def test_modal_media_keeps_only_web_urls(self):
+        modal = {"fields": [
+            {"type": "DISPLAY", "display": {"image": {"url": "data:image/svg+xml,<svg/>"}}},
+            {"type": "DISPLAY", "display": {"download": {"url": "javascript:alert(1)", "text": "Report"}}},
+            {"type": "DISPLAY", "display": {"download": {"url": "https://example.com/report.pdf", "text": "Report"}}},
+        ]}
+
+        fields = present.present_modal(modal)["fields"]
+
+        assert fields[0]["display"]["image"]["url"] == ""
+        assert fields[1]["display"]["download"] == {"url": "", "text": "Report"}
+        assert fields[2]["display"]["download"]["url"] == "https://example.com/report.pdf"
 
     def test_modal_display_html_becomes_markdown(self):
         modal = {"title": ":memo: New request", "fields": [

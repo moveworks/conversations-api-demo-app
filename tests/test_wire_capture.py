@@ -14,11 +14,14 @@ from fastapi.testclient import TestClient
 from requests.adapters import HTTPAdapter
 from requests.structures import CaseInsensitiveDict
 
+import threading
+
 import app.server as server
 import app.turns as turns
-import app.wire_capture as wire_capture
 from moveworks_capi.auth import ApiKeyBearer
 from moveworks_capi.client import ConversationsApiClient
+
+wire_capture = pytest.importorskip("app.wire_capture", reason="the wire capture module was deleted")
 
 BASE = "https://api.example.com"
 SECRET_KEY = "mw-key-do-not-show"
@@ -50,9 +53,10 @@ class FakeApi(HTTPAdapter):
         return response
 
 
-def _session(routes) -> wire_capture.RecordingSession:
+def _session(routes) -> "wire_capture.RecordingSession":
     session = wire_capture.RecordingSession()
     session.mount("https://", FakeApi(routes))
+    wire_capture.hub.activate(session.generation)
     return session
 
 
@@ -72,9 +76,14 @@ def _wire_frames(raw: list) -> list:
 @pytest.fixture(autouse=True)
 def capture_on(monkeypatch):
     monkeypatch.setitem(wire_capture.state, "enabled", True)
-    wire_capture.hub.clear()
+    wire_capture.hub.activate(None)
     yield
-    wire_capture.hub.clear()
+    wire_capture.hub.activate(None)
+    server.session.reset()
+
+
+def _backlog_records() -> list:
+    return [json.loads(frame.split(b"data: ", 1)[1])["exchange"] for _, frame in wire_capture.hub.backlog]
 
 
 class TestRedaction:
@@ -93,7 +102,7 @@ class TestRedaction:
     def test_token_exchange_form_body_is_redacted(self):
         body = "grant_type=client_credentials&client_assertion=eyJhbGciOi.eyJzdWIi.c2ln&client_secret=s3cret&assertion=a1"
 
-        shown = wire_capture.format_body(body, "application/x-www-form-urlencoded")
+        shown = wire_capture.format_body(body)
 
         assert "grant_type=client_credentials" in shown
         assert "s3cret" not in shown and "eyJ" not in shown and "a1" not in shown
@@ -102,7 +111,7 @@ class TestRedaction:
     def test_token_fields_in_json_bodies_are_redacted_at_any_depth(self):
         body = json.dumps({"access_token": "tok", "token_type": "Bearer", "nested": [{"refresh_token": "r", "id_token": "i"}]})
 
-        shown = json.loads(wire_capture.format_body(body.encode(), "application/json"))
+        shown = json.loads(wire_capture.format_body(body.encode()))
 
         assert shown == {"access_token": "[redacted]", "token_type": "Bearer",
                          "nested": [{"refresh_token": "[redacted]", "id_token": "[redacted]"}]}
@@ -114,13 +123,75 @@ class TestRedaction:
         assert wire_capture.redact_url(f"{BASE}/x?limit=1&token=abc") == f"{BASE}/x?limit=1&token=[redacted]"
         assert wire_capture.redact_url(f"{BASE}/x?limit=1") == f"{BASE}/x?limit=1"
 
+    def test_credential_names_match_in_any_case_or_separator_style(self):
+        body = json.dumps({"accessToken": "a", "clientSecret": "b", "refreshToken": "c", "x-api-key": "d",
+                           "userPassword": "e", "error": {"code": "INVALID_JWT", "message": "bad"}})
+
+        shown = json.loads(wire_capture.format_body(body))
+
+        assert shown == {"accessToken": "[redacted]", "clientSecret": "[redacted]", "refreshToken": "[redacted]",
+                         "x-api-key": "[redacted]", "userPassword": "[redacted]",
+                         "error": {"code": "INVALID_JWT", "message": "bad"}}
+
+    def test_oauth_code_and_verifier_are_redacted_in_form_bodies(self):
+        shown = wire_capture.format_body(b"grant_type=authorization_code&code=abc123&code_verifier=v3r1f13r&redirect_uri=x")
+
+        assert "abc123" not in shown and "v3r1f13r" not in shown
+        assert "grant_type=authorization_code" in shown and "redirect_uri=x" in shown
+
+    def test_form_body_without_a_content_type_is_still_redacted(self):
+        request = requests.Request("POST", f"{BASE}/token", data="client_secret=s3cret&scope=all").prepare()
+        assert "Content-Type" not in request.headers
+
+        record = wire_capture.exchange(request, None, 0.0)
+
+        assert "s3cret" not in record["request_body"]
+        assert "scope=all" in record["request_body"]
+
+    def test_json_inside_a_string_field_is_redacted(self):
+        body = json.dumps({"payload": json.dumps({"token": "t0k", "email": "user@example.com"})})
+
+        shown = json.loads(wire_capture.format_body(body))
+
+        assert json.loads(shown["payload"]) == {"token": "[redacted]", "email": "user@example.com"}
+
+    def test_jwts_in_the_path_and_query_are_redacted(self):
+        jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"
+
+        shown = wire_capture.redact_url(f"{BASE}/session/{jwt}/x?jwt={jwt}&limit=1")
+
+        assert jwt not in shown
+        assert shown == f"{BASE}/session/[redacted]/x?jwt=[redacted]&limit=1"
+
+    def test_presigned_url_signatures_are_redacted(self):
+        url = f"{BASE}/f?X-Amz-Signature=abc&X-Amz-Security-Token=def&X-Amz-Expires=60&sig=ghi"
+
+        assert wire_capture.redact_url(url) == (
+            f"{BASE}/f?X-Amz-Signature=[redacted]&X-Amz-Security-Token=[redacted]&X-Amz-Expires=60&sig=[redacted]"
+        )
+
+    def test_secrets_inside_header_values_are_redacted(self):
+        shown = wire_capture.redact_headers({"Location": "https://example.com/cb?token=abc&state=1"})
+
+        assert shown == {"Location": "https://example.com/cb?token=[redacted]&state=1"}
+
+    def test_error_strings_are_redacted(self):
+        request = requests.Request("GET", f"{BASE}/x").prepare()
+
+        record = wire_capture.exchange(
+            request, None, 0.0, error=f"HTTPSConnectionPool: Max retries exceeded with url: /x?api_key={SECRET_KEY} (Bearer {SECRET_KEY})",
+        )
+
+        assert SECRET_KEY not in record["error"]
+        assert "api_key=[redacted]" in record["error"] and "Bearer [redacted]" in record["error"]
+
     def test_a_real_call_never_exposes_the_api_key(self):
         headers = {"Content-Type": "application/json", "Set-Cookie": "sid=1"}
         client = _client({("GET", "/rest/v1/conversations"): (200, headers, {"conversations": []})})
 
         client.get("/rest/v1/conversations", params={"limit": 1})
 
-        frame = wire_capture.hub.backlog[-1]
+        frame = wire_capture.hub.backlog[-1][1]
         assert SECRET_KEY.encode() not in frame and b"sid=1" not in frame
         record = json.loads(frame.split(b"data: ", 1)[1])["exchange"]
         assert record["request_headers"]["Authorization"] == "[redacted]"
@@ -132,14 +203,14 @@ class TestRedaction:
 
 class TestSizeCap:
     def test_large_bodies_are_truncated_with_a_marker(self):
-        shown = wire_capture.format_body(b"x" * (wire_capture.MAX_BODY_BYTES + 10), "text/plain")
+        shown = wire_capture.format_body(b"x" * (wire_capture.MAX_BODY_BYTES + 10))
 
         assert shown.startswith("x" * 100)
         assert len(shown.encode()) < wire_capture.MAX_BODY_BYTES + 200
         assert shown.endswith(f"[truncated: showing the first 65,536 of {wire_capture.MAX_BODY_BYTES + 10:,} bytes]")
 
     def test_small_bodies_are_kept_whole(self):
-        assert wire_capture.format_body(b"hello", "text/plain") == "hello"
+        assert wire_capture.format_body(b"hello") == "hello"
 
     def test_a_long_event_stream_is_truncated(self):
         big = SSE * (wire_capture.MAX_BODY_BYTES // len(SSE) + 5)
@@ -149,7 +220,7 @@ class TestSizeCap:
         list(response.iter_lines())
         response.close()
 
-        body = json.loads(wire_capture.hub.backlog[-1].split(b"data: ", 1)[1])["exchange"]["response_body"]
+        body = _backlog_records()[-1]["response_body"]
         assert f"of {len(big):,} bytes]" in body
 
 
@@ -235,11 +306,12 @@ class TestTurnAssociation:
 
         session = wire_capture.RecordingSession()
         session.mount("https://", Unreachable())
+        wire_capture.hub.activate(session.generation)
 
         with pytest.raises(requests.ConnectionError):
             session.get(f"{BASE}/x")
 
-        record = json.loads(wire_capture.hub.backlog[-1].split(b"data: ", 1)[1])["exchange"]
+        record = _backlog_records()[-1]
         assert record["error"] == "connection refused"
         assert "status" not in record
 
@@ -268,3 +340,74 @@ class TestDisabled:
         assert wire_capture.state["enabled"] is True
         assert local.post("/api/wire", json={"capture": False}).json() == {"capture": False}
         assert wire_capture.state["enabled"] is False
+
+
+class TestConnections:
+    def test_a_poll_in_flight_from_the_previous_connection_never_reaches_the_next(self, monkeypatch):
+        release = threading.Event()
+
+        class SlowPollFromA(HTTPAdapter):
+            def send(self, request, **kwargs):
+                release.wait(5)
+                return FakeApi({("GET", urlsplit(request.url).path): (200, {}, {"events": [{"text": "A-private-event"}]})}).send(request)
+
+        session_a = wire_capture.RecordingSession()
+        session_a.mount("https://", SlowPollFromA())
+        wire_capture.hub.activate(session_a.generation)
+        poll_a = threading.Thread(target=session_a.get, args=(f"{BASE}/rest/v1/conversations/-/events",))
+        poll_a.start()
+
+        class SessionForB(wire_capture.RecordingSession):
+            def __init__(self):
+                super().__init__()
+                self.mount("https://", FakeApi(DefaultRoutes({("GET", "/rest/v1/conversations"): (200, {}, {"conversations": []})})))
+
+        monkeypatch.setattr(wire_capture, "RecordingSession", SessionForB)
+        local = TestClient(server.app, base_url="http://127.0.0.1:8090")
+        assert local.post("/api/connect", json={"base_url": BASE, "bot_name": "Bot B", "api_key": "key-b"}).status_code == 200
+        release.set()
+        poll_a.join(5)
+
+        records = _backlog_records()
+        assert records and all(r["request_headers"]["Assistant-Name"] == "Bot B" for r in records)
+        assert not any(b"A-private-event" in frame for _, frame in wire_capture.hub.backlog)
+
+    def test_capture_stops_when_the_last_events_stream_closes(self):
+        async def open_and_close():
+            first, second = asyncio.Queue(), asyncio.Queue()
+            wire_capture.hub.subscribe(first)
+            wire_capture.hub.subscribe(second)
+            wire_capture.hub.unsubscribe(first)
+            still_on = wire_capture.state["enabled"]
+            wire_capture.hub.unsubscribe(second)
+            return still_on
+
+        assert asyncio.run(open_and_close()) is True
+        assert wire_capture.state["enabled"] is False
+
+    def test_message_endpoint_attaches_exchanges_to_the_turn_rows(self, monkeypatch):
+        server.session.client = _client({
+            ("POST", "/rest/v1/conversations"): (201, {"Content-Type": "application/json"}, {"conversation_id": "conv_1"}),
+            ("POST", "/rest/v1/conversations/conv_1/responses/stream"): (200, {"Content-Type": "text/event-stream"}, SSE),
+            ("GET", "/rest/v1/conversations/conv_1/responses/resp_1"): (200, {"Content-Type": "application/json"}, COMPLETED),
+        })
+        fast_wait = functools.partial(turns.wait_for_completion, initial_delay_seconds=0, poll_interval_seconds=0)
+        monkeypatch.setattr(turns, "wait_for_completion", fast_wait)
+        monkeypatch.setitem(server.settings, "streaming", True)
+        local = TestClient(server.app, base_url="http://127.0.0.1:8090")
+
+        body = local.post("/api/message", json={"text": "hi"}).text
+
+        frames = _wire_frames([chunk.encode() + b"\n\n" for chunk in body.strip().split("\n\n")])
+        rows = {f["id"]: f["label"] for f in frames if f.get("id")}
+        assert [rows[f["attach"]] for f in frames if "attach" in f] == [
+            "POST /conversations", "POST /responses/stream", "GET /responses/{id}",
+        ]
+        assert SECRET_KEY not in body
+
+
+class DefaultRoutes(dict):
+    """Routes with an empty 200 for anything not listed, such as event polls."""
+
+    def __missing__(self, key):
+        return (200, {"Content-Type": "application/json"}, {})
