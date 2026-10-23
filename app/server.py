@@ -26,12 +26,12 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+from typing import Annotated, Any, AsyncIterator, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from moveworks_capi.auth import ApiKeyBearer
@@ -48,6 +48,11 @@ try:  # Optional: delete app/wire_capture.py (with js/optional/wire.js) to drop 
     from app import wire_capture
 except ImportError:  # pragma: no cover - exercised by deleting the module
     wire_capture = None
+
+try:  # Optional: delete app/attachments.py (with js/optional/attachments.js) to drop file attachments.
+    from app.attachments import register as register_attachments
+except ImportError:  # pragma: no cover - exercised by deleting the module
+    register_attachments = None
 
 try:  # Optional: delete app/test_notifications.py to drop the "send a test notification" panel.
     from app.test_notifications import register as register_test_notifications
@@ -130,6 +135,8 @@ class MessageIn(BaseModel):
     text: Optional[str] = None
     callback_id: Optional[str] = None
     conversation_id: Optional[str] = None
+    # Upload ids from app.attachments; the API takes at most five per turn.
+    file_ids: list[Annotated[str, Field(min_length=1)]] = Field(default_factory=list, max_length=5)
 
 
 class ModalRef(BaseModel):
@@ -174,7 +181,7 @@ def build_app() -> FastAPI:
             origin = request.headers.get("origin")
             if origin and origin != f"{request.url.scheme}://{request.headers.get('host', '')}":
                 return JSONResponse({"detail": "Cross-origin request refused."}, status_code=403)
-            if not request.headers.get("content-type", "").startswith("application/json"):
+            if not (request.headers.get("content-type", "").startswith("application/json") or _is_raw_upload(request)):
                 return JSONResponse({"detail": "Send JSON."}, status_code=415)
         return await call_next(request)
 
@@ -248,10 +255,13 @@ def build_app() -> FastAPI:
     @app.post("/api/message")
     async def post_message(body: MessageIn) -> StreamingResponse:
         _require_connected()
-        if bool(body.text) == bool(body.callback_id):
-            raise HTTPException(status_code=400, detail="Send either text or callback_id.")
+        if bool(body.text or body.file_ids) == bool(body.callback_id):
+            raise HTTPException(status_code=400, detail="Send text or files, or a callback_id.")
         session.last_message_at = time.time()
-        frames = run_turn(session.client, body.conversation_id, body.text, body.callback_id, streaming=settings["streaming"])
+        frames = run_turn(
+            session.client, body.conversation_id, body.text, body.callback_id,
+            streaming=settings["streaming"], file_ids=body.file_ids,
+        )
         return StreamingResponse(
             wire_capture.capture_turn(frames) if wire_capture else frames,
             media_type="text/event-stream",
@@ -369,10 +379,24 @@ def build_app() -> FastAPI:
 
     if wire_capture:
         wire_capture.register(app)
+    if register_attachments:
+        register_attachments(app, session)
     if register_test_notifications:
         register_test_notifications(app, session)
 
     return app
+
+
+def _is_raw_upload(request: Request) -> bool:
+    """A file sent as raw bytes with its name in ``X-File-Name``.
+
+    The custom header makes a cross-site request need a CORS preflight, which
+    this server never grants, so it carries the same protection as JSON.
+    """
+    return (
+        request.headers.get("content-type", "") == "application/octet-stream"
+        and bool(request.headers.get("x-file-name"))
+    )
 
 
 def _upstream_hint(exc: Exception) -> str:

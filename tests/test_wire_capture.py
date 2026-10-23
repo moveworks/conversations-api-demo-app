@@ -223,6 +223,67 @@ class TestRedaction:
         assert json.loads(record["response_body"]) == {"conversations": []}
 
 
+class TestMultipart:
+    def _upload(self, content: bytes, **fields):
+        parts = [(name, (None, value, None)) for name, value in fields.items()]
+        parts.append(("file", ("vpn error.png", content, "application/octet-stream")))
+        return requests.Request("POST", f"{BASE}/rest/v1alpha1/files", files=parts).prepare()
+
+    def test_file_parts_show_name_and_size_instead_of_bytes(self):
+        content = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 4 + b"\r\n"
+
+        shown = wire_capture.exchange(self._upload(content, purpose="CONVERSATIONS_ATTACHMENT"), None, 0.0)["request_body"]
+
+        lines = shown.split("\n")
+        assert 'Content-Disposition: form-data; name="purpose"' in lines
+        assert "CONVERSATIONS_ATTACHMENT" in lines
+        assert 'Content-Disposition: form-data; name="file"; filename="vpn error.png"' in lines
+        assert f"[file: vpn error.png, {len(content):,} bytes]" in lines
+        assert "PNG" not in shown and "\ufffd" not in shown
+        assert lines.index("CONVERSATIONS_ATTACHMENT") < lines.index(f"[file: vpn error.png, {len(content):,} bytes]")
+        assert lines[-1].endswith("--")
+
+    def test_a_large_file_part_is_never_copied(self):
+        import tracemalloc
+
+        content = b"\x00" * (20 * 1024 * 1024)
+        request = self._upload(content, purpose="CONVERSATIONS_ATTACHMENT")
+
+        tracemalloc.start()
+        shown = wire_capture.format_request_body(request)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        assert f"[file: vpn error.png, {len(content):,} bytes]" in shown
+        assert peak < 1024 * 1024
+
+    def test_an_upload_through_the_recording_session_is_shown_part_by_part(self):
+        session = _session({("POST", "/rest/v1alpha1/files"): (201, {"Content-Type": "application/json"}, {"id": "file_1", "name": "a.png"})})
+
+        session.post(f"{BASE}/rest/v1alpha1/files", files=[
+            ("purpose", (None, "CONVERSATIONS_ATTACHMENT")),
+            ("file", ("a.png", b"\x89PNG" + bytes(200), "application/octet-stream")),
+        ], headers={"Authorization": f"Bearer {SECRET_KEY}"})
+
+        frame = wire_capture.hub.backlog[-1][1]
+        record = _backlog_records()[-1]
+        assert record["request_headers"]["Authorization"] == "[redacted]"
+        assert "[file: a.png, 204 bytes]" in record["request_body"]
+        assert json.loads(record["response_body"]) == {"id": "file_1", "name": "a.png"}
+        assert SECRET_KEY.encode() not in frame and b"PNG" not in frame
+
+    def test_secret_form_fields_in_a_multipart_body_are_redacted(self):
+        shown = wire_capture.format_request_body(self._upload(b"x", client_secret="s3cret", note="hello"))
+
+        assert "s3cret" not in shown
+        assert "[redacted]" in shown and "hello" in shown
+
+    def test_a_streamed_request_body_is_not_read(self):
+        request = requests.Request("POST", f"{BASE}/x", data=iter([b"a", b"b"])).prepare()
+
+        assert wire_capture.format_request_body(request) == "[streamed body, not captured]"
+
+
 class TestSizeCap:
     def test_large_bodies_are_truncated_with_a_marker(self):
         shown = wire_capture.format_body(b"x" * (wire_capture.MAX_BODY_BYTES + 10))

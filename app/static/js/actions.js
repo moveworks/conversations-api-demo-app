@@ -4,7 +4,7 @@ import { renderMarkdown } from "./markdown.js";
 import { scrollDown } from "./scroll.js";
 import { toast } from "./toast.js";
 import { sendMessage } from "./chat.js";
-import { fetchModalCached, openModal } from "./modals.js";
+import { openModal, prefetchModal } from "./modals.js";
 
 export function actionChip(action, ref) {
   if (action.type === "URL_ACTION" && action.url) {
@@ -92,10 +92,13 @@ export async function renderActions(turn, data) {
     }
   });
 
+  // History can hold many turns; only read the forms of the ones on screen.
+  if (!data.actions.some((a) => a.type === "MODAL_ACTION" && a.modal_id)) return;
+  await whenVisible(group);
   await Promise.all(data.actions.map(async (action, i) => {
     if (action.type !== "MODAL_ACTION" || !action.modal_id) return;
     let modal;
-    try { modal = await fetchModalCached({ ...ref, modal_id: action.modal_id }); } catch { return; }
+    try { modal = await prefetchModal({ ...ref, modal_id: action.modal_id }); } catch { return; }
     const meta = modalMeta(modal);
     // "Edit request" names itself; only offers of a distinct form become cards.
     if (!meta.heading || meta.heading.toLowerCase() === action.label.toLowerCase()) return;
@@ -105,6 +108,20 @@ export async function renderActions(turn, data) {
     btn.addEventListener("click", () => openModal({ ...ref, modal_id: action.modal_id }, meta.heading, btn));
     placeCard(buildFormCard(btn, meta), i);
   }));
+}
+
+// Resolves once the element is near the chat's viewport (history renders
+// off-screen first, so this also waits for it to be attached).
+function whenVisible(el) {
+  return new Promise((resolve) => {
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        observer.disconnect();
+        resolve();
+      }
+    }, { root: $("chat-scroll"), rootMargin: "400px 0px" });
+    observer.observe(el);
+  });
 }
 
 // The human-facing name, blurb and price, from a modal's DISPLAY fields.

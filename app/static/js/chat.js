@@ -110,10 +110,10 @@ function initials(name) {
 const queue = [];
 let inFlight = null;
 
-export function sendMessage({ text, callbackId, echo }) {
-  const bubble = echo ? addUserBubble(echo) : null;
+export function sendMessage({ text, callbackId, echo, files = [] }) {
+  const bubble = echo || files.length ? addUserBubble(echo || "", chatLog, files.map((f) => f.name)) : null;
   if (bubble && inFlight) setStatus(bubble, "queued", "Queued");
-  queue.push({ text, callbackId, bubble });
+  queue.push({ text, callbackId, fileIds: files.map((f) => f.id), bubble });
   if (!inFlight) drain();
 }
 
@@ -153,24 +153,29 @@ function setStatus(turn, kind, label) {
   turn.appendChild(status);
 }
 
-async function runMessage({ text, callbackId }, signal) {
+async function runMessage({ text, callbackId, fileIds }, signal) {
   const turn = addTurn("assistant");
   // Waiting messages stay below the reply they wait for.
   for (const waiting of queue) if (waiting.bubble) chatLog.appendChild(waiting.bubble);
   const thinking = hooks.thinking ? hooks.thinking(turn) : null;
-  const ctx = { turn, thinking, bubble: null };
+  const ctx = { turn, thinking, bubble: null, failed: false };
 
   try {
     const resp = await postRaw("/api/message", {
       text: text || null,
       callback_id: callbackId || null,
       conversation_id: state.conversationId,
+      file_ids: fileIds,
     }, signal);
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
       throw new Error(apiDetail(body, `request failed (${resp.status})`));
     }
     await readEventStream(resp, (frame) => handleFrame(frame, ctx));
+    // A FAILED response can still carry the assistant's own explanation as a
+    // MESSAGE, sometimes filed after `completed` (or `completed` arrives twice
+    // when the stream closes early), so decide once the turn has ended.
+    if (ctx.failed && !ctx.bubble) addErrorLine("The assistant could not complete that response. Try again, or rephrase.");
     return true;
   } catch (e) {
     if (e.name !== "AbortError") addErrorLine(String(e.message || e));
@@ -206,7 +211,7 @@ function handleFrame({ event, data }, ctx) {
     return;
   }
   if (event === "completed") {
-    if (data.status === "FAILED") addErrorLine("The assistant could not complete that response. Try again, or rephrase.");
+    if (data.status === "FAILED") ctx.failed = true;
     return;
   }
   if (event === "late_message") {

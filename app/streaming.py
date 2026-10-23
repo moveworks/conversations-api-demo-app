@@ -9,7 +9,7 @@ once.
 
 from __future__ import annotations
 
-from typing import AsyncIterator, Callable, Optional
+from typing import AsyncIterator, Callable, Optional, Sequence
 
 from moveworks_capi.client import ConversationsApiClient
 from moveworks_capi.streaming import (
@@ -21,7 +21,7 @@ from moveworks_capi.streaming import (
 )
 from moveworks_capi.rendering import normalize_markup
 
-from app.frames import sse_frame, to_async, wire
+from app.frames import sse_frame, to_async, turn_summary, wire
 from app.present import present_message
 
 
@@ -33,9 +33,11 @@ async def stream_turn(
     on_response_id: Callable[[str], None],
     on_answer: Callable[[], None] = lambda: None,
     on_completed: Callable[[], None] = lambda: None,
+    *,
+    file_ids: Sequence[str] = (),
 ) -> AsyncIterator[bytes]:
-    yield wire("send", "POST /responses/stream", (text or "")[:120] if text else f"callback_id={callback_id[:40]}...")
-    stream = stream_response(client, conversation_id, text, callback_id=callback_id)
+    yield wire("send", "POST /responses/stream", turn_summary(text, callback_id, file_ids))
+    stream = stream_response(client, conversation_id, text, callback_id=callback_id, file_ids=file_ids)
     async for event in to_async(stream):
         if isinstance(event, ResponseCreated):
             on_response_id(event.response_id)

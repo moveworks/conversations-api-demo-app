@@ -5,6 +5,8 @@ import { scrollDown, stickToBottom } from "./scroll.js";
 import { state } from "./state.js";
 import { toast } from "./toast.js";
 import { addTurn, addUserBubble, chatLog, resetChat, renderAssistantMessage } from "./chat.js";
+import { closeSidebarIfOverlay } from "./layout.js";
+import { cancelPrefetch } from "./modals.js";
 
 const PAGE = 20;
 let showArchived = false;
@@ -16,15 +18,33 @@ export async function loadConversations() {
     const list = $("conv-list");
     list.replaceChildren();
     const conversations = body.conversations || [];
-    if (!conversations.length) {
-      const li = document.createElement("li");
-      li.className = "conv-empty";
-      li.textContent = showArchived ? "No archived conversations." : "No conversations yet. Send a message to start one.";
-      list.appendChild(li);
+    newestShown = conversations.reduce((max, c) => Math.max(max, stamp(c)), 0);
+    const shown = visible(conversations);
+    $("conv-clear").hidden = showArchived || !shown.length;
+    $("conv-show-all").hidden = showArchived || !clearedThrough();
+    if (!shown.length) {
+      list.appendChild(emptyItem(conversations.length));
       return;
     }
-    appendConversations(list, conversations, body.metadata?.next_cursor);
+    appendConversations(list, shown, nextCursorIfUncleared(conversations, body.metadata?.next_cursor));
   } catch { /* the sidebar is best-effort */ }
+}
+
+function emptyItem(hiddenCount) {
+  const li = document.createElement("li");
+  li.className = "conv-empty";
+  if (showArchived) li.textContent = "No archived conversations.";
+  else if (!hiddenCount) li.textContent = "No conversations yet. Send a message to start one.";
+  else {
+    li.append("List cleared. New conversations appear here. ");
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "link-btn";
+    all.textContent = "Show cleared";
+    all.addEventListener("click", showAllConversations);
+    li.appendChild(all);
+  }
+  return li;
 }
 
 function appendConversations(list, conversations, nextCursor) {
@@ -40,7 +60,8 @@ function appendConversations(list, conversations, nextCursor) {
     try {
       const body = await getJson(`/api/conversations?limit=${PAGE}&archived=${showArchived}&cursor=${encodeURIComponent(nextCursor)}`);
       li.remove();
-      appendConversations(list, body.conversations || [], body.metadata?.next_cursor);
+      const more = body.conversations || [];
+      appendConversations(list, visible(more), nextCursorIfUncleared(more, body.metadata?.next_cursor));
     } catch (e) {
       btn.disabled = false;
       toast(String(e.message || e));
@@ -50,15 +71,49 @@ function appendConversations(list, conversations, nextCursor) {
   list.appendChild(li);
 }
 
+// ---------- clearing the list (this browser only; nothing changes in Moveworks) ----------
+
+// Clearing hides every conversation up to the newest one listed, compared on
+// the API's own timestamps so the local clock cannot hide a new conversation.
+// Kept per data center and Bot Name, across reloads.
+let newestShown = 0;
+
+const stamp = (c) => Date.parse(c.updated_at || c.created_at || "") || 0;
+const clearKey = () => `mw_capi_cleared:${$("org-chip").textContent}:${$("bot-chip").textContent}`;
+const clearedThrough = () => (showArchived ? 0 : Number(localStorage.getItem(clearKey())) || 0);
+const visible = (conversations) => {
+  const cutoff = clearedThrough();
+  return cutoff ? conversations.filter((c) => stamp(c) > cutoff) : conversations;
+};
+// The list is newest first, so a page that reaches cleared conversations
+// has nothing visible after it.
+const nextCursorIfUncleared = (conversations, cursor) => (visible(conversations).length < conversations.length ? null : cursor);
+
+export function clearConversationList() {
+  if (!newestShown) return;
+  localStorage.setItem(clearKey(), String(newestShown));
+  startNewConversation();
+  loadConversations();
+}
+
+export function showAllConversations() {
+  localStorage.removeItem(clearKey());
+  loadConversations();
+}
+
 function conversationItem(c) {
   const li = document.createElement("li");
   li.className = "conv-item" + (c.conversation_id === state.conversationId ? " active" : "");
   li.dataset.id = c.conversation_id;
-  li.title = c.conversation_id;
-  const preview = document.createElement("div");
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "conv-open";
+  open.title = c.conversation_id;
+  open.setAttribute("aria-current", String(c.conversation_id === state.conversationId));
+  const preview = document.createElement("span");
   preview.className = "conv-preview";
   preview.textContent = (c.title || "").trim() || "New conversation";
-  const meta = document.createElement("div");
+  const meta = document.createElement("span");
   meta.className = "conv-meta";
   meta.textContent = relTime(c.updated_at || c.created_at);
   const menu = document.createElement("button");
@@ -67,8 +122,9 @@ function conversationItem(c) {
   menu.title = "Rename or archive";
   menu.setAttribute("aria-label", "Conversation options");
   menu.addEventListener("click", (e) => { e.stopPropagation(); openItemMenu(li, c, preview); });
-  li.append(preview, meta, menu);
-  li.addEventListener("click", () => { if (!li.classList.contains("editing")) openConversation(c.conversation_id); });
+  open.append(preview, meta);
+  open.addEventListener("click", () => openConversation(c.conversation_id));
+  li.append(open, menu);
   return li;
 }
 
@@ -94,15 +150,19 @@ function closeItemMenus() {
 
 function startRename(li, c, preview) {
   li.classList.add("editing");
+  const open = li.querySelector(".conv-open");
   const input = document.createElement("input");
   input.className = "conv-rename";
   input.value = preview.textContent;
   input.maxLength = 200;
-  preview.replaceWith(input);
+  input.setAttribute("aria-label", "Conversation title");
+  open.hidden = true;
+  li.prepend(input);
   input.focus();
   input.select();
   let done = false;
-  const finish = async (save) => {
+  // Blur means the user moved on, so only Enter and Escape return focus here.
+  const finish = async (save, refocus = true) => {
     if (done) return;
     done = true;
     const title = input.value.trim();
@@ -115,15 +175,20 @@ function startRename(li, c, preview) {
         toast(String(e.message || e));
       }
     }
-    input.replaceWith(preview);
+    input.remove();
+    open.hidden = false;
     li.classList.remove("editing");
+    if (refocus) open.focus();
   };
   input.addEventListener("click", (e) => e.stopPropagation());
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); finish(true); }
-    if (e.key === "Escape") finish(false);
+    if (e.key === "Escape") {
+      e.stopPropagation(); // cancel the rename, not the side panel or sidebar
+      finish(false);
+    }
   });
-  input.addEventListener("blur", () => finish(true));
+  input.addEventListener("blur", () => finish(true, false));
 }
 
 async function setArchived(li, c, archived) {
@@ -156,7 +221,7 @@ export function toggleArchivedView() {
   btn.classList.toggle("on", showArchived);
   btn.textContent = showArchived ? "Back" : "Archived";
   btn.title = showArchived ? "Back to conversations" : "Show archived conversations";
-  $("conv-heading").textContent = showArchived ? "ARCHIVED" : "CHATS";
+  $("conv-heading").textContent = showArchived ? "Archived" : "Chats";
   loadConversations();
 }
 
@@ -171,7 +236,9 @@ function relTime(iso) {
 
 function markActiveConversation() {
   document.querySelectorAll(".conv-item").forEach((li) => {
-    li.classList.toggle("active", li.dataset.id === state.conversationId);
+    const active = li.dataset.id === state.conversationId;
+    li.classList.toggle("active", active);
+    li.querySelector(".conv-open")?.setAttribute("aria-current", String(active));
   });
 }
 
@@ -193,9 +260,10 @@ function renderMessages(messages, id, into) {
 
 export async function openConversation(id) {
   resetChat();
+  cancelPrefetch();
   state.conversationId = id;
   markActiveConversation();
-  if (window.innerWidth <= 1000) $("conv-sidebar").hidden = true;
+  closeSidebarIfOverlay();
   chatLog.replaceChildren();
   $("chat-empty").hidden = true;
   const loading = document.createElement("div");
@@ -257,8 +325,10 @@ function olderButton(id, cursor) {
 
 export function startNewConversation() {
   resetChat();
+  cancelPrefetch();
   state.conversationId = null;
   markActiveConversation();
+  closeSidebarIfOverlay();
   chatLog.replaceChildren();
   $("chat-empty").hidden = false;
   $("chat-input").focus();
