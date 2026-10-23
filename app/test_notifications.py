@@ -1,7 +1,7 @@
 """Optional: send yourself a proactive notification from inside the app.
 
 Proactive messages originate inside Moveworks, so the only documented way to
-produce one on demand is an Agent Studio listener whose plugin ends in a
+produce one on demand is a Tool Studio listener whose plugin ends in a
 ``notify`` step (see ``examples/trigger_listener.py`` in the starter). This module POSTs to
 that listener, which then messages the recipient; the notification comes back
 through the same ``/events`` polling the app already does.

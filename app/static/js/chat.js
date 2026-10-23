@@ -43,6 +43,7 @@ export function addUserBubble(text, into = chatLog, files = []) {
 export function addErrorLine(text) {
   const el = document.createElement("div");
   el.className = "errline";
+  el.setAttribute("role", "alert");
   el.textContent = text;
   chatLog.appendChild(el);
   scrollDown();
@@ -171,14 +172,18 @@ async function runMessage({ text, callbackId, fileIds }, signal) {
       const body = await resp.json().catch(() => ({}));
       throw new Error(apiDetail(body, `request failed (${resp.status})`));
     }
-    await readEventStream(resp, (frame) => handleFrame(frame, ctx));
+    await readEventStream(resp, (frame) => { if (!signal.aborted) handleFrame(frame, ctx); });
     // A FAILED response can still carry the assistant's own explanation as a
     // MESSAGE, sometimes filed after `completed` (or `completed` arrives twice
     // when the stream closes early), so decide once the turn has ended.
     if (ctx.failed && !ctx.bubble) addErrorLine("The assistant could not complete that response. Try again, or rephrase.");
+    // Announce the finished reply once, rather than every streamed snapshot.
+    if (ctx.bubble && !signal.aborted) $("reply-status").textContent = ctx.bubble.textContent;
     return true;
   } catch (e) {
-    if (e.name !== "AbortError") addErrorLine(String(e.message || e));
+    // Test the signal, not the error: a body read cut off by the abort can
+    // surface as an ordinary "request failed" error.
+    if (!signal.aborted) addErrorLine(String(e.message || e));
     return false;
   } finally {
     if (thinking) thinking.finish();

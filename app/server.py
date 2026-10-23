@@ -22,7 +22,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
+import io
 import logging
+import socket
 import sys
 import time
 from pathlib import Path
@@ -37,8 +40,9 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from moveworks_capi.auth import ApiKeyBearer
 from moveworks_capi.client import ConversationsApiClient
 from moveworks_capi.conversations import list_conversations, list_messages, update_conversation
-from moveworks_capi.errors import AuthenticationError, ConversationsApiError, RateLimitedError, RequestRejectedError
-from moveworks_capi.notifications import Event, InMemoryCheckpoint, PollingLoop
+from moveworks_capi.errors import AuthenticationError, RateLimitedError, RequestRejectedError
+from moveworks_capi.notifications import Event, EventsPollingClient, InMemoryCheckpoint, PollingLoop
+from moveworks_capi.notifications.polling import event_sort_key
 
 from app.frames import sse_frame
 from app.present import present_message, present_modal, present_notification_text
@@ -91,6 +95,10 @@ KNOWN_BASE_URLS = [
 # Event polls count against the same rate limit as history and list reads, so a
 # faster poll starves the sidebar.
 POLL_INTERVAL_SECONDS = 6.0
+# Events created this soon before connect still count as new, to absorb clock
+# skew between this machine and Moveworks.
+CONNECT_CLOCK_SKEW_SECONDS = 5.0
+POLL_USER = "app-user"
 
 
 class Session:
@@ -106,10 +114,10 @@ class Session:
         # Proactive notifications route to the user's most recent channel, so
         # a test notification is only meaningful after a message from here.
         self.last_message_at: Optional[float] = None
-        # A fresh checkpoint starts at the user's first event ever. The first
-        # poll only catches up to now, so connecting does not replay history
-        # as a burst of notifications.
-        self.catching_up: bool = True
+        self.checkpoint = InMemoryCheckpoint()
+        self.connected_at: float = 0.0
+        # Polls run in a worker thread; events reach the SSE queues through this loop.
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
     def connected(self) -> bool:
@@ -235,11 +243,15 @@ def build_app() -> FastAPI:
         session.client = client
         session.base_url = base_url
         session.bot_name = bot_name
+        session.connected_at = time.time()
+        session.loop = asyncio.get_running_loop()
         session.polling_loop = PollingLoop(
             client=client,
-            checkpoint=InMemoryCheckpoint(),
-            handler=_dispatch_polled_event,
+            checkpoint=session.checkpoint,
+            handler=lambda user_id, event: _dispatch_polled_event(user_id, event, client),
             interval_seconds=POLL_INTERVAL_SECONDS,
+            # _first_poll sets the checkpoint, so history is never replayed here.
+            first_run="replay_history",
         )
         session.polling_task = asyncio.create_task(_polling_task())
         log.info("connected: bot=%s base=%s", bot_name, base_url)
@@ -270,7 +282,7 @@ def build_app() -> FastAPI:
 
     @app.post("/api/feedback")
     async def submit_feedback(body: FeedbackIn) -> dict:
-        _require_connected()
+        client = _require_connected()
         path = (
             f"/rest/v1/conversations/{body.conversation_id}"
             f"/responses/{body.response_id}/messages/{body.message_id}/feedback"
@@ -278,46 +290,27 @@ def build_app() -> FastAPI:
         payload = {"callback_id": body.callback_id}
         if body.additional_feedback and body.additional_feedback.strip():
             payload["additional_feedback"] = body.additional_feedback.strip()
-        try:
-            result = await asyncio.to_thread(lambda: session.client.post(path, json=payload).json())
-        except ConversationsApiError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {"ok": True, "result": result}
+        return {"ok": True, "result": await _upstream(lambda: client.post(path, json=payload).json())}
 
     @app.get("/api/conversations")
     async def conversations_index(limit: int = 20, cursor: Optional[str] = None, archived: bool = False) -> dict:
-        _require_connected()
-        try:
-            return await asyncio.to_thread(
-                lambda: list_conversations(session.client, limit=limit, cursor=cursor, archived=archived)
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=_upstream_hint(exc)) from exc
+        client = _require_connected()
+        return await _upstream(lambda: list_conversations(client, limit=limit, cursor=cursor, archived=archived))
 
     @app.patch("/api/conversations/{conversation_id}")
     async def conversation_update(conversation_id: str, body: ConversationPatchIn) -> dict:
-        _require_connected()
+        client = _require_connected()
         title = body.title.strip() if body.title is not None else None
         if title is not None and not title:
             raise HTTPException(status_code=400, detail="A title cannot be empty.")
         if title is None and body.archived is None:
             raise HTTPException(status_code=400, detail="Send a title or archived.")
-        try:
-            return await asyncio.to_thread(
-                lambda: update_conversation(session.client, conversation_id, title=title, archived=body.archived)
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=_upstream_hint(exc)) from exc
+        return await _upstream(lambda: update_conversation(client, conversation_id, title=title, archived=body.archived))
 
     @app.get("/api/conversations/{conversation_id}/messages")
     async def conversation_messages(conversation_id: str, limit: int = 50, cursor: Optional[str] = None) -> dict:
-        _require_connected()
-        try:
-            body = await asyncio.to_thread(
-                lambda: list_messages(session.client, conversation_id, limit=limit, cursor=cursor)
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=_upstream_hint(exc)) from exc
+        client = _require_connected()
+        body = await _upstream(lambda: list_messages(client, conversation_id, limit=limit, cursor=cursor))
         # The API returns newest first; the thread renders oldest first.
         messages = list(reversed(body.get("messages") or []))
         return {
@@ -327,46 +320,33 @@ def build_app() -> FastAPI:
 
     @app.post("/api/modal")
     async def get_modal(body: ModalRef) -> dict:
-        _require_connected()
+        client = _require_connected()
         # Modals are served under /rest/v1 only.
         path = (
             f"/rest/v1/conversations/{body.conversation_id}"
             f"/responses/{body.response_id}/messages/{body.message_id}/modals/{body.modal_id}"
         )
-        try:
-            return present_modal(await asyncio.to_thread(lambda: session.client.get(path).json()))
-        except ConversationsApiError as exc:
-            raise HTTPException(status_code=502, detail=_modal_error_hint(exc)) from exc
+        return present_modal(await _upstream(lambda: client.get(path).json(), _modal_error_hint))
 
     @app.post("/api/modal/refresh")
     async def refresh_modal(body: ModalRefreshIn) -> dict:
-        _require_connected()
+        client = _require_connected()
         # Re-resolves conditional fields after a `triggers_refresh` field changes.
         # Choice fields come back without `options`; the browser re-applies them.
         path = (
             f"/rest/v1/conversations/{body.conversation_id}"
             f"/responses/{body.response_id}/messages/{body.message_id}/modals/{body.modal_id}/refresh"
         )
-        try:
-            return present_modal(await asyncio.to_thread(
-                lambda: session.client.post(path, json={"values": body.values}).json()
-            ))
-        except ConversationsApiError as exc:
-            raise HTTPException(status_code=502, detail=_modal_error_hint(exc)) from exc
+        return present_modal(await _upstream(lambda: client.post(path, json={"values": body.values}).json(), _modal_error_hint))
 
     @app.post("/api/modal/submit")
     async def submit_modal(body: ModalSubmitIn) -> dict:
-        _require_connected()
+        client = _require_connected()
         path = (
             f"/rest/v1/conversations/{body.conversation_id}"
             f"/responses/{body.response_id}/messages/{body.message_id}/modals/{body.modal_id}/submit"
         )
-        try:
-            return await asyncio.to_thread(
-                lambda: session.client.post(path, json={"values": body.values}).json()
-            )
-        except ConversationsApiError as exc:
-            raise HTTPException(status_code=502, detail=_modal_error_hint(exc)) from exc
+        return await _upstream(lambda: client.post(path, json={"values": body.values}).json(), _modal_error_hint)
 
     @app.get("/api/events")
     async def notifications_stream(request: Request) -> StreamingResponse:
@@ -403,8 +383,8 @@ def _upstream_hint(exc: Exception) -> str:
     """Turn a client exception into something a person can act on."""
     if isinstance(exc, RateLimitedError):
         return (
-            "Moveworks rate-limited this request. Fetch conversation history one "
-            "at a time rather than in parallel, and retry in a few seconds."
+            "Moveworks rate-limited this request. Retry in a few seconds. Reading "
+            "conversation history in parallel uses up the limit fastest."
         )
     return str(exc)[:300] or exc.__class__.__name__
 
@@ -416,12 +396,23 @@ def _modal_error_hint(exc: Exception) -> str:
             "the message for a fresh one rather than reusing an old id. If every modal returns 404, "
             "check with your Moveworks account team that modals are available for your Moveworks instance."
         )
-    return str(exc)[:300]
+    return _upstream_hint(exc)
 
 
-def _require_connected() -> None:
-    if not session.connected:
+def _require_connected() -> ConversationsApiClient:
+    if session.client is None:
         raise HTTPException(status_code=409, detail="Not connected. Enter your Bot Name and credential first.")
+    return session.client
+
+
+async def _upstream(call, hint=None):
+    """Run a blocking API call; any failure becomes a 502 with something a
+    person can act on. Callers capture the client first, so a disconnect
+    mid-call cannot leave them holding None."""
+    try:
+        return await asyncio.to_thread(call)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=(hint or _upstream_hint)(exc)) from exc
 
 
 def _connect_error_hint(exc: Exception) -> str:
@@ -482,22 +473,60 @@ async def _notifications_sse(request: Request) -> AsyncIterator[bytes]:
 
 
 async def _polling_task() -> None:
-    # An API key is bound to one user, so one checkpoint covers every event.
+    # This connection's objects, captured now: a reconnect replaces the session's,
+    # and a poll still running in its thread must not write into the new ones.
+    client, checkpoint, polling_loop, connected_at = (
+        session.client, session.checkpoint, session.polling_loop, session.connected_at
+    )
+    # The first poll waits one interval so it does not compete with the connect
+    # check and the first conversation-list read.
+    first = True
     while True:
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
         try:
-            if session.polling_loop:
-                await asyncio.to_thread(session.polling_loop.poll_once, "app-user")
-                session.catching_up = False
+            if client and first:
+                await asyncio.to_thread(_first_poll, client, connected_at, checkpoint)
+                first = False
+            elif polling_loop:
+                # An API key is bound to one user, so one checkpoint covers every event.
+                await asyncio.to_thread(polling_loop.poll_once, POLL_USER)
         except asyncio.CancelledError:
             return
         except Exception:
             log.exception("polling tick failed; retrying")
-        await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
-def _dispatch_polled_event(user_id: str, event: Event) -> None:
-    if session.catching_up:
+def _first_poll(client: ConversationsApiClient, connected_at: float, checkpoint: InMemoryCheckpoint) -> None:
+    """Set the checkpoint to the newest event, dispatching only events since connect.
+
+    Connecting must not replay history as a burst of notifications, but an
+    event that arrived during the first interval is new. One unfiltered read
+    puts the newest events on the first page.
+    """
+    events = sorted(EventsPollingClient(client).fetch_page(limit=20).events, key=event_sort_key)
+    for event in events:
+        if event_sort_key(event)[0] >= connected_at - CONNECT_CLOCK_SKEW_SECONDS:
+            _dispatch_polled_event(POLL_USER, event, client)
+        checkpoint.advance(POLL_USER, event.event_id)
+
+
+def _dispatch_polled_event(user_id: str, event: Event, client: Optional[ConversationsApiClient] = None) -> None:
+    # Called from the polling thread: hand off to the loop so a waiting SSE
+    # stream wakes now, not at its next heartbeat. The connection check runs on
+    # the loop too, where a reconnect cannot interleave with it.
+    loop = session.loop
+    if loop is None:
+        _deliver(event, client)
         return
+    try:
+        loop.call_soon_threadsafe(_deliver, event, client)
+    except RuntimeError:
+        pass  # the loop closed: the app is shutting down
+
+
+def _deliver(event: Event, client: Optional[ConversationsApiClient]) -> None:
+    if client is not None and session.client is not client:
+        return  # a poll from a connection that has since been replaced
     for queue in list(session.event_subscribers):
         try:
             queue.put_nowait(event)
@@ -515,9 +544,21 @@ def main(argv: Optional[list] = None) -> None:
     args = parser.parse_args(argv)
     settings["streaming"] = not args.no_stream
 
-    sys.stdout.reconfigure(line_buffering=True)
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     import uvicorn
+
+    # Uvicorn reports a taken port only after "startup complete", so check first.
+    try:
+        with socket.socket() as probe:
+            # The same option uvicorn sets, so the check fails exactly when uvicorn would.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((HOST, args.port))
+    except OSError as exc:
+        if exc.errno != errno.EADDRINUSE:
+            raise
+        sys.exit(f"Port {args.port} is already in use. Stop the other process, or pass --port to choose another.")
 
     log.info("streaming %s", "on" if settings["streaming"] else "off (submit and poll)")
     uvicorn.run(app, host=HOST, port=args.port, log_level="info")

@@ -12,7 +12,7 @@
 
 <!-- ============ Connect screen ============ -->
 <section id="connect-screen" class="connect-screen">
-  <div class="connect-card" role="form" aria-labelledby="connect-title">
+  <form id="connect-form" class="connect-card" aria-labelledby="connect-title">
     <p class="eyebrow">Moveworks · Conversations API</p>
     <h1 id="connect-title">Talk to your assistant.<br /><span class="accent">Over the wire.</span></h1>
     <p class="connect-sub">Connect a Moveworks instance with an API key and chat with its assistant:
@@ -22,7 +22,7 @@
       <span>Data center</span>
       <div class="baseurl-row">
         <select id="base-url-select" aria-label="Data center base URL"></select>
-        <input id="base-url-custom" type="url" placeholder="https://api.moveworks.ai" hidden />
+        <input id="base-url-custom" type="url" placeholder="https://api.moveworks.ai" hidden disabled />
       </div>
     </label>
 
@@ -39,8 +39,8 @@
     </label>
 
     <p id="connect-error" class="connect-error" role="alert" hidden></p>
-    <button id="connect-btn" class="primary">Connect</button>
-  </div>
+    <button id="connect-btn" class="primary" type="submit">Connect</button>
+  </form>
   <footer class="connect-foot">Demo app from the <span class="mono">moveworks/conversations-api-demo-app</span> repo · runs locally, one Moveworks instance per process</footer>
 </section>
 
@@ -103,7 +103,8 @@
             <button type="button" class="action-chip">What's the status of my tickets?</button>
           </div>
         </div>
-        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <div id="chat-log" class="chat-log"></div>
+        <div id="reply-status" class="visually-hidden" role="status"></div>
       </div>
       <form id="composer" class="composer">
         <textarea id="chat-input" rows="1" placeholder="Message your assistant" autocomplete="off" aria-label="Message your assistant"></textarea>

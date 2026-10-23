@@ -82,6 +82,7 @@ export async function openModal(ref, label, sourceChip) {
   const form = $("modal-form");
   form.innerHTML = `<p class="modal-loading">Loading the form…</p>`;
   $("modal-backdrop").hidden = false;
+  $("modal-close").focus();
   hooks.wire({ dir: "send", label: "GET .../modals/{id}" });
   try {
     const modal = await fetchModal(ref);
@@ -359,8 +360,10 @@ export async function submitModal() {
 }
 
 export function closeModal() {
+  const opener = current.chip;
   $("modal-backdrop").hidden = true;
   current = emptyModalState();
+  if (opener?.isConnected && !opener.disabled) opener.focus();
   emit("app:modal-closed");
 }
 

@@ -24,3 +24,13 @@ def offline_short_links(monkeypatch):
     SHORT_LINKS.clear()
     monkeypatch.setattr(rendering, "short_link_target", SHORT_LINKS.get)
     yield SHORT_LINKS
+
+
+@pytest.fixture(autouse=True)
+def fresh_session():
+    """Each test starts disconnected, with no subscribers, loop, or checkpoint left over."""
+    from app import server
+
+    server.session.reset()
+    yield
+    server.session.reset()

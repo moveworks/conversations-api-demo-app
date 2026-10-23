@@ -37,6 +37,8 @@ export function connectNotifications() {
         turn.appendChild(bubble);
       }
       hooks.notificationArrived(data, turn);
+      // Follow-ups land in the thread without a reply in flight, so announce them here.
+      $("reply-status").textContent = turn.querySelector(".bubble")?.textContent || "";
       scrollDown();
       hooks.wire({ dir: "recv", label: "event → chat (same conversation)", detail: (data.text || "").slice(0, 80) });
       return;

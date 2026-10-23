@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,7 +13,7 @@ from fastapi.testclient import TestClient
 import app.present as present
 import app.server as server
 import app.turns as turns
-from moveworks_capi.errors import RequestRejectedError, StreamClosedError, StreamError
+from moveworks_capi.errors import RateLimitedError, RequestRejectedError, StreamClosedError, StreamError
 from moveworks_capi.responses import Response
 from moveworks_capi.streaming import ResponseCreated
 from tests.conftest import PORTAL_REDIRECTS
@@ -23,13 +24,6 @@ FIXTURES = Path(__file__).parent / "fixtures"
 @pytest.fixture
 def local():
     return TestClient(server.app, base_url="http://127.0.0.1:8090")
-
-
-@pytest.fixture(autouse=True)
-def fresh_session():
-    server.session.reset()
-    yield
-    server.session.reset()
 
 
 class TestSecurity:
@@ -412,6 +406,25 @@ class TestFeedback:
             {"callback_id": "cb"},
         ]
 
+    def test_upstream_failures_become_a_502_with_a_hint(self, local):
+        class Client:
+            def post(self, path, json):
+                raise RateLimitedError("rate limited")
+
+            def get(self, path):
+                raise ValueError("not JSON")
+
+        server.session.client = Client()
+        ref = {"conversation_id": "c", "response_id": "r", "message_id": "m"}
+
+        feedback = local.post("/api/feedback", json={**ref, "callback_id": "cb"})
+        modal = local.post("/api/modal", json={**ref, "modal_id": "modal_1"})
+
+        assert feedback.status_code == 502
+        assert "rate-limited" in feedback.json()["detail"]
+        assert modal.status_code == 502
+        assert modal.json()["detail"] == "not JSON"
+
 
 class TestModalRefresh:
     def test_refresh_sends_every_value_and_presents_the_result(self, local):
@@ -691,15 +704,111 @@ class TestTurns:
         assert [e for e, _ in frames] == ["error"]
 
 
-class TestNotifications:
-    def test_backlog_from_the_first_poll_is_not_dispatched(self):
+class _EventsClient:
+    def __init__(self, pages: list):
+        self.pages = pages
+        self.reads: list = []
+
+    def get(self, path, params=None):
+        self.reads.append(params or {})
+        body = {"events": self.pages.pop(0)}
+        return type("R", (), {"json": lambda self: body, "headers": {}})()
+
+
+def _event_json(event_id: str, created_at: str, conversation_id: str = "conv_1") -> dict:
+    return {
+        "event_id": event_id,
+        "conversation_id": conversation_id,
+        "created_at": created_at,
+        "event_payload": {"type": "MESSAGE_EVENT", "message": {"actor": "ASSISTANT", "content": {}}},
+    }
+
+
+class TestNotificationPolling:
+    CONNECTED_AT = 1_800_000_000.0  # 2027-01-15T08:00:00Z
+
+    def _connect(self, monkeypatch, client: _EventsClient) -> list:
+        dispatched: list = []
+
+        def dispatch(user_id, event, client=None):
+            dispatched.append(event.event_id)
+
+        monkeypatch.setattr(server, "_dispatch_polled_event", dispatch)
+        server.session.client = cast(Any, client)
+        server.session.connected_at = self.CONNECTED_AT
+        server.session.polling_loop = server.PollingLoop(
+            client=cast(Any, client), checkpoint=server.session.checkpoint, handler=dispatch, first_run="replay_history",
+        )
+        return dispatched
+
+    def _run_ticks(self, monkeypatch, client: _EventsClient, ticks: int) -> list:
+        """Run the polling task for ``ticks`` polls; returns the read count seen at each sleep."""
+        reads_at_sleep: list = []
+
+        async def fake_sleep(seconds):
+            reads_at_sleep.append(len(client.reads))
+            if len(reads_at_sleep) > ticks:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(server.asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(server.asyncio, "to_thread", lambda fn, *a: _ready(fn(*a)))
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(server._polling_task())
+        return reads_at_sleep
+
+    def test_first_read_waits_one_interval(self, monkeypatch):
+        client = _EventsClient([[]])
+        self._connect(monkeypatch, client)
+
+        assert self._run_ticks(monkeypatch, client, ticks=1) == [0, 1]
+
+    def test_first_read_dispatches_only_events_since_connect_and_sets_the_checkpoint(self, monkeypatch):
+        history = _event_json("evt_a", "2027-01-15T07:00:00Z")
+        during_wait = _event_json("evt_b", "2027-01-15T08:00:03Z")
+        later = _event_json("evt_c", "2027-01-15T08:00:09Z")
+        client = _EventsClient([[during_wait, history], [later]])
+        dispatched = self._connect(monkeypatch, client)
+
+        self._run_ticks(monkeypatch, client, ticks=2)
+
+        assert dispatched == ["evt_b", "evt_c"]
+        assert client.reads[1] == {"starting_after": "evt_b", "limit": 20}
+
+    def test_an_empty_first_read_delivers_every_later_event(self, monkeypatch):
+        client = _EventsClient([[], [_event_json("evt_1", "2027-01-15T08:00:30Z")]])
+        dispatched = self._connect(monkeypatch, client)
+
+        self._run_ticks(monkeypatch, client, ticks=2)
+
+        assert dispatched == ["evt_1"]
+        assert server.session.checkpoint.load(server.POLL_USER) == "evt_1"
+
+
+async def _ready(value):
+    return value
+
+
+class TestDispatch:
+    def test_events_from_a_replaced_connection_are_dropped(self):
+        current, previous = object(), object()
+        server.session.client = cast(Any, current)
         queue: asyncio.Queue = asyncio.Queue()
         server.session.event_subscribers.append(queue)
-        event = object()
 
-        server._dispatch_polled_event("app-user", event)
+        server._dispatch_polled_event("app-user", cast(Any, "old"), cast(Any, previous))
+        server._dispatch_polled_event("app-user", cast(Any, "new"), cast(Any, current))
+
+        assert queue.get_nowait() == "new"
         assert queue.empty()
 
-        server.session.catching_up = False
-        server._dispatch_polled_event("app-user", event)
-        assert queue.get_nowait() is event
+    def test_an_event_from_the_polling_thread_wakes_the_stream_at_once(self):
+        import threading
+
+        async def scenario():
+            server.session.loop = asyncio.get_running_loop()
+            queue: asyncio.Queue = asyncio.Queue()
+            server.session.event_subscribers.append(queue)
+            threading.Thread(target=server._dispatch_polled_event, args=("app-user", "evt")).start()
+            return await asyncio.wait_for(queue.get(), timeout=1.0)
+
+        assert asyncio.run(scenario()) == "evt"
