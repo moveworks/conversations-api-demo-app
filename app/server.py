@@ -511,23 +511,27 @@ def _first_poll(client: ConversationsApiClient, connected_at: float, checkpoint:
 
 
 def _dispatch_polled_event(user_id: str, event: Event, client: Optional[ConversationsApiClient] = None) -> None:
+    # Called from the polling thread: hand off to the loop so a waiting SSE
+    # stream wakes now, not at its next heartbeat. The connection check runs on
+    # the loop too, where a reconnect cannot interleave with it.
+    loop = session.loop
+    if loop is None:
+        _deliver(event, client)
+        return
+    try:
+        loop.call_soon_threadsafe(_deliver, event, client)
+    except RuntimeError:
+        pass  # the loop closed: the app is shutting down
+
+
+def _deliver(event: Event, client: Optional[ConversationsApiClient]) -> None:
     if client is not None and session.client is not client:
         return  # a poll from a connection that has since been replaced
-    # Called from the polling thread: hand off to the loop so a waiting SSE
-    # stream wakes now, not at its next heartbeat.
-    loop = session.loop
     for queue in list(session.event_subscribers):
-        if loop is None:
-            _offer(queue, event)
-        else:
-            loop.call_soon_threadsafe(_offer, queue, event)
-
-
-def _offer(queue: asyncio.Queue, event: Event) -> None:
-    try:
-        queue.put_nowait(event)
-    except asyncio.QueueFull:
-        pass
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
 
 
 app = build_app()

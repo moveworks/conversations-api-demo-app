@@ -26,13 +26,6 @@ def local():
     return TestClient(server.app, base_url="http://127.0.0.1:8090")
 
 
-@pytest.fixture(autouse=True)
-def fresh_session():
-    server.session.reset()
-    yield
-    server.session.reset()
-
-
 class TestSecurity:
     def test_local_requests_are_served(self, local):
         assert local.get("/api/session").status_code == 200

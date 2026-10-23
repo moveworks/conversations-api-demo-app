@@ -2,7 +2,7 @@ import { getJson, postJson } from "./api.js";
 import { $, emit } from "./dom.js";
 import { state } from "./state.js";
 import { chatLog, resetChat } from "./chat.js";
-import { loadConversations } from "./conversations.js";
+import { cancelOpen, loadConversations } from "./conversations.js";
 import { cancelPrefetch } from "./modals.js";
 import { closeNotifications, connectNotifications } from "./notifications.js";
 
@@ -58,6 +58,7 @@ export async function disconnect() {
   await postJson("/api/disconnect", {});
   closeNotifications();
   resetChat();
+  cancelOpen();
   cancelPrefetch();
   state.conversationId = null;
   chatLog.replaceChildren();

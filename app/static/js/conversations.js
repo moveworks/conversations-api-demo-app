@@ -262,6 +262,11 @@ function renderMessages(messages, id, into) {
 // cannot render on top of a newer one.
 let openSeq = 0;
 
+// Disconnecting abandons any history load still in flight.
+export function cancelOpen() {
+  openSeq += 1;
+}
+
 export async function openConversation(id) {
   const seq = ++openSeq;
   resetChat();
