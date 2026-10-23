@@ -13,11 +13,12 @@ export function actionChip(action, ref) {
     a.href = action.url;
     a.target = "_blank";
     a.rel = "noopener";
-    a.textContent = action.is_auth_link ? `🔒 Connect ${action.label}` : action.label;
+    a.textContent = action.is_auth_link ? `🔒 ${consentLabel(action.label)}` : action.label;
     if (action.is_auth_link) {
-      // The assistant resumes the interrupted plugin on the user's next turn.
+      // The original request resumes after consent, and the result arrives
+      // as an event on this conversation, so nothing is resent.
       a.addEventListener("click", () => {
-        toast("Grant access in the new tab, then send your next message. The assistant picks up where it left off.");
+        toast("Grant access in the new tab. The assistant continues in this conversation once you do.");
       });
     }
     return a;
@@ -34,11 +35,20 @@ export function actionChip(action, ref) {
     });
   } else if (action.type === "MODAL_ACTION" && action.modal_id) {
     btn.addEventListener("click", () => openModal({ ...ref, modal_id: action.modal_id }, action.label, btn));
+  } else if (action.type === "HANDOFF_ACTION") {
+    // Opens this message's Message.handoff menu (see renderHandoff). Nothing
+    // is sent, so the rest of the row stays usable.
+    btn.classList.add("handoff-toggle", "handoff-trigger");
+    btn.setAttribute("aria-expanded", "false");
   } else {
     btn.disabled = true;
     btn.title = "This action type is not supported by this app.";
   }
   return btn;
+}
+
+function consentLabel(label) {
+  return /^connect\b/i.test(label) ? label : `Connect ${label}`;
 }
 
 export async function renderActions(turn, data) {
@@ -49,6 +59,7 @@ export async function renderActions(turn, data) {
   cards.className = "form-cards";
   const row = document.createElement("div");
   row.className = "actions-row";
+  row.dataset.messageId = data.message_id || "";
   group.append(cards, row);
   turn.appendChild(group);
 
@@ -157,28 +168,48 @@ export function lockActionRow(chip) {
   }
 }
 
-// Message.handoff: the Get Help menu, when the assistant offers one.
-// The Get Help menu arrives on ordinary assistant turns, including mid-handoff
-// status messages. Native surfaces show Get Help as one persistent control, so
-// the menu sits behind a single button and only the newest turn offers it
-// (addTurn retires older ones).
+// Message.handoff, the Get Help menu, arrives on ordinary assistant turns,
+// including mid-handoff status messages. Native surfaces show Get Help as one
+// persistent control, so the menu sits behind a single button and only the
+// newest turn offers it (addTurn retires older ones). When the message carries
+// a HANDOFF_ACTION, that action is the menu's trigger instead, in its place in
+// the actions row.
 export function renderHandoff(turn, data) {
   const ref = { conversation_id: data.conversation_id, response_id: data.response_id, message_id: data.message_id };
+  const menu = handoffMenu(data.categories, ref);
+  // One turn can hold several messages; use this message's own trigger.
+  const row = [...turn.querySelectorAll(".action-group .actions-row")].find((r) => r.dataset.messageId === (data.message_id || ""));
+  const trigger = row && row.querySelector(".handoff-trigger");
+  if (trigger) {
+    row.after(menu);
+    bindToggle(trigger, menu);
+    return;
+  }
   const wrap = document.createElement("div");
   wrap.className = "handoff";
   const toggle = document.createElement("button");
   toggle.className = "action-chip handoff-toggle";
   toggle.textContent = "Get help";
   toggle.setAttribute("aria-expanded", "false");
-  const menu = document.createElement("div");
-  menu.className = "handoff-menu";
-  menu.hidden = true;
+  bindToggle(toggle, menu);
+  wrap.append(toggle, menu);
+  turn.appendChild(wrap);
+  scrollDown();
+}
+
+function bindToggle(toggle, menu) {
   toggle.addEventListener("click", () => {
     menu.hidden = !menu.hidden;
     toggle.setAttribute("aria-expanded", String(!menu.hidden));
     if (!menu.hidden) scrollDown();
   });
-  for (const category of data.categories) {
+}
+
+function handoffMenu(categories, ref) {
+  const menu = document.createElement("div");
+  menu.className = "handoff-menu";
+  menu.hidden = true;
+  for (const category of categories) {
     const section = document.createElement("div");
     section.className = "handoff-cat";
     const h = document.createElement("h4");
@@ -205,7 +236,5 @@ export function renderHandoff(turn, data) {
     section.appendChild(items);
     menu.appendChild(section);
   }
-  wrap.append(toggle, menu);
-  turn.appendChild(wrap);
-  scrollDown();
+  return menu;
 }

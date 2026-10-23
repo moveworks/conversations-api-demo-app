@@ -50,6 +50,10 @@ class TestSecurity:
         resp = local.post("/api/disconnect", content="{}", headers={"Content-Type": "text/plain"})
         assert resp.status_code == 415
 
+    def test_another_local_port_is_a_different_origin(self, local):
+        resp = local.post("/api/disconnect", json={}, headers={"Origin": "http://127.0.0.1:9999"})
+        assert resp.status_code == 403
+
     def test_same_origin_json_post_is_served(self, local):
         resp = local.post("/api/disconnect", json={}, headers={"Origin": "http://127.0.0.1:8090"})
         assert resp.status_code == 200
@@ -106,10 +110,10 @@ class TestPresentMessage:
         assert [(a["label"], a["type"]) for a in shown["actions"]] == [
             ("File ticket", "CALLBACK_ACTION"),
             ("Edit/Add details", "MODAL_ACTION"),
-            ("Other help options", "URL_ACTION"),
+            ("Other help options", "HANDOFF_ACTION"),
         ]
-        # Smart handoff rides on actions; Message.handoff stays empty.
-        assert shown["handoff"] == []
+        # The HANDOFF_ACTION opens the menu carried on the same message.
+        assert [i["title"] for i in shown["handoff"][0]["items"]] == ["File an IT ticket", "Start agent chat"]
         assert shown["feedback"] == {"helpful": "callback_fixture", "unhelpful": "callback_fixture"}
         assert shown["text"].startswith("I understand you’d like to file a ticket")
 
@@ -171,6 +175,35 @@ class TestPresentMessage:
 
         assert not any("form" in a for a in shown["actions"])
 
+    def test_omitted_handoff_action_keeps_form_links_paired(self, offline_short_links):
+        offline_short_links.update(PORTAL_REDIRECTS)
+        message = json.loads((FIXTURES / "portal_form_message.json").read_text())
+        message["actions"].insert(0, {"type": "HANDOFF_ACTION", "label": "Other help options", "handoff_action": {}})
+
+        shown = present.present_message(message)
+
+        assert [a["type"] for a in shown["actions"]] == ["URL_ACTION"] * 3
+        assert shown["actions"][0]["form"]["title"] == "401(k) Retirement Plan Inquiry"
+
+    def test_handoff_action_with_only_empty_categories_is_omitted(self):
+        message = json.loads((FIXTURES / "smart_handoff_message.json").read_text())
+        message["handoff"]["handoff_categories"][0]["handoff_items"] = []
+
+        assert "HANDOFF_ACTION" not in [a["type"] for a in present.present_message(message)["actions"]]
+
+    def test_handoff_action_without_handoff_options_is_omitted(self):
+        message = json.loads((FIXTURES / "smart_handoff_message.json").read_text())
+        del message["handoff"]
+
+        shown = present.present_message(message)
+
+        assert [a["type"] for a in shown["actions"]] == ["CALLBACK_ACTION", "MODAL_ACTION"]
+
+    def test_agent_avatar_must_be_https(self):
+        for url in ("http://example.com/dana.png", "javascript:alert(1)", "data:image/png;base64,AAAA", None):
+            sender = present.present_sender({"display_name": "Dana Fielding", "avatar_url": url})
+            assert sender == {"display_name": "Dana Fielding", "avatar_url": ""}
+
     def test_live_agent_messages_carry_the_agent_identity(self):
         # Shape per the API reference.
         message = {
@@ -202,6 +235,67 @@ class TestPresentMessage:
         assert menu[0]["name"] == "IT"
         assert menu[0]["items"][0]["action"]["modal_id"] == "modal_1"
         assert menu[0]["items"][1]["text"] == "See [hours](https://example.com)"
+
+    def test_empty_handoff_items_and_categories_are_dropped(self):
+        message = json.loads((FIXTURES / "smart_handoff_message.json").read_text())
+        message["handoff"]["handoff_categories"] = [
+            {"category_id": "it", "name": "IT", "handoff_items": [
+                {"title": "Nothing here", "type": "TEXT"},
+                {"title": "Hours", "type": "TEXT", "text": {"type": "MARKDOWN_TEXT", "markdown_text": {"text": "9 to 5"}}},
+            ]},
+            {"category_id": "hr", "name": "HR", "handoff_items": [{"title": "Empty", "type": "ACTION"}]},
+        ]
+
+        shown = present.present_message(message)
+
+        assert [c["name"] for c in shown["handoff"]] == ["IT"]
+        assert [i["title"] for i in shown["handoff"][0]["items"]] == ["Hours"]
+        assert "HANDOFF_ACTION" in [a["type"] for a in shown["actions"]]
+
+        message["handoff"]["handoff_categories"] = message["handoff"]["handoff_categories"][1:]
+        shown = present.present_message(message)
+
+        assert shown["handoff"] == []
+        assert "HANDOFF_ACTION" not in [a["type"] for a in shown["actions"]]
+
+    def test_url_action_must_be_a_web_url(self):
+        for url in ("javascript:alert(1)", "data:text/html,hi", "mailto:help@example.com", ""):
+            shown = present.present_action({"type": "URL_ACTION", "label": "Open", "url": url, "is_auth_link": True})
+            assert shown["url"] is None
+            assert shown["is_auth_link"] is False
+        for url in ("https://example.com/a", "HTTP://example.com/b"):
+            assert present.present_action({"type": "URL_ACTION", "label": "Open", "url": url})["url"] == url
+
+    def test_handoff_item_url_action_must_be_a_web_url(self):
+        message = {"handoff": {"handoff_categories": [{"name": "IT", "handoff_items": [
+            {"title": "Portal", "type": "ACTION", "action": {
+                "label": "Portal", "type": "URL_ACTION", "url_action": {"url": "javascript:alert(1)"}}},
+        ]}]}}
+
+        item = present.present_message(message)["handoff"][0]["items"][0]
+
+        assert item["action"]["url"] is None
+
+    def test_sources_link_only_web_urls(self):
+        message = {"citations": [
+            {"citation_id": "a", "url": "javascript:alert(1)", "display": {"title": {"markdown_text": {"text": "Bad"}}}},
+            {"citation_id": "b", "url": "https://example.com/kb", "display": {"title": {"markdown_text": {"text": "Good"}}}},
+        ]}
+
+        assert [(s["title"], s["url"]) for s in present.present_sources(message)] == [("Bad", ""), ("Good", "https://example.com/kb")]
+
+    def test_modal_media_keeps_only_web_urls(self):
+        modal = {"fields": [
+            {"type": "DISPLAY", "display": {"image": {"url": "data:image/svg+xml,<svg/>"}}},
+            {"type": "DISPLAY", "display": {"download": {"url": "javascript:alert(1)", "text": "Report"}}},
+            {"type": "DISPLAY", "display": {"download": {"url": "https://example.com/report.pdf", "text": "Report"}}},
+        ]}
+
+        fields = present.present_modal(modal)["fields"]
+
+        assert fields[0]["display"]["image"]["url"] == ""
+        assert fields[1]["display"]["download"] == {"url": "", "text": "Report"}
+        assert fields[2]["display"]["download"]["url"] == "https://example.com/report.pdf"
 
     def test_modal_display_html_becomes_markdown(self):
         modal = {"title": ":memo: New request", "fields": [
@@ -369,7 +463,7 @@ class TestTurns:
 
         frames = _frames(asyncio.run(collect()))
 
-        assert [event for event, _ in frames] == ["conversation", "delta", "completed", "actions", "feedback_ids"]
+        assert [event for event, _ in frames] == ["conversation", "delta", "completed", "actions", "handoff", "feedback_ids"]
         assert client.posts[0] == ("/rest/v1/conversations", {"title": "file a ticket"})
         assert client.posts[1] == ("/rest/v1/conversations/conv_new/responses", {"input": {"chat": {"text": "file a ticket"}}})
         assert frames[1][1]["output_type"] == "MESSAGE"

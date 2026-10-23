@@ -96,12 +96,14 @@ function displayField(d) {
     el.className = `display-${style === "header" ? "header" : style === "subtle" ? "subtle" : "normal"}`;
     if (style === "normal") el.classList.add("modal-desc");
     renderMarkdown(el, d.text.text || "");
-  } else if (d.image) {
+  } else if (d.image?.url) {
     const img = document.createElement("img");
     img.src = d.image.url;
     img.alt = "";
     img.style.maxWidth = "100%";
     el.appendChild(img);
+  } else if (d.download && !d.download.url) {
+    el.textContent = d.download.text || "Download";
   } else if (d.download) {
     const a = document.createElement("a");
     a.href = d.download.url;
