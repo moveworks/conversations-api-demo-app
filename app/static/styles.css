@@ -59,7 +59,9 @@ button svg { width: 1.15em; height: 1.15em; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 0.5rem; }
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-2); }
 .mono { font-family: var(--mono); }
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* Fixed, not absolute: an absolute element with no positioned ancestor sits at
+   the chat's full content height and makes the whole page scroll. */
+.visually-hidden { position: fixed; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* A chevron drawn in CSS, for every disclosure: points right when closed, down when open. */
 .disclosure::before {
