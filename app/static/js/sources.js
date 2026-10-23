@@ -12,7 +12,8 @@ export function renderSources(turn, sources, live) {
     box.className = "sources";
     const toggle = document.createElement("button");
     toggle.type = "button";
-    toggle.className = "sources-toggle";
+    toggle.className = "sources-toggle disclosure";
+    toggle.setAttribute("aria-expanded", "false");
     const list = document.createElement("div");
     list.className = "sources-list";
     list.hidden = true;
@@ -20,13 +21,14 @@ export function renderSources(turn, sources, live) {
       hooks.animateHeight(box, () => {
         list.hidden = !list.hidden;
         box.classList.toggle("open", !list.hidden);
+        toggle.setAttribute("aria-expanded", String(!list.hidden));
       }, { minMs: 300 });
     });
     box.append(toggle, list);
     turn.appendChild(box);
     if (live) hooks.reveal(box);
   }
-  box.querySelector(".sources-toggle").textContent = `Sources (${sources.length})`;
+  box.querySelector(".sources-toggle").textContent = sources.length === 1 ? "1 source" : `${sources.length} sources`;
   box.querySelector(".sources-list").replaceChildren(...sources.map(sourceItem));
 }
 

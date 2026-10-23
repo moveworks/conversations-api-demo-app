@@ -3,15 +3,22 @@ import { hooks } from "./hooks.js";
 import { scrollDown } from "./scroll.js";
 import { toast } from "./toast.js";
 
+const THUMB = "M7 10v11H4a1 1 0 01-1-1v-9a1 1 0 011-1h3zm0 0l4-7a2.5 2.5 0 012.5 2.5V9h5.2a2 2 0 012 2.3l-1.2 7.5a2 2 0 01-2 1.7H7";
+const ICONS = {
+  helpful: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="${THUMB}"/></svg>`,
+  unhelpful: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="transform: scaleY(-1)"><path d="${THUMB}"/></svg>`,
+};
+
 export function renderFeedback(turn, data) {
   const row = document.createElement("div");
   row.className = "feedback-row";
-  for (const [kind, icon, label] of [["helpful", "👍", "Helpful"], ["unhelpful", "👎", "Not helpful"]]) {
+  for (const [kind, label] of [["helpful", "Helpful"], ["unhelpful", "Not helpful"]]) {
     if (!data[kind]) continue;
     const btn = document.createElement("button");
     btn.className = "fb-btn";
-    btn.textContent = icon;
+    btn.innerHTML = ICONS[kind];
     btn.title = label;
+    btn.setAttribute("aria-label", label);
     btn.addEventListener("click", () => {
       // A thumbs-down is where a reason helps most; the API takes it as
       // `additional_feedback` on the same call.

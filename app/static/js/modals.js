@@ -1,5 +1,5 @@
 import { postJson } from "./api.js";
-import { $ } from "./dom.js";
+import { $, emit } from "./dom.js";
 import { hooks } from "./hooks.js";
 import { renderMarkdown } from "./markdown.js";
 import { scrollDown } from "./scroll.js";
@@ -18,16 +18,66 @@ function fetchModal(ref) {
 }
 
 // Modal ids are minted per message read, so a cache only lives as long as
-// the page's copy of that message.
+// the page's copy of that message. A failed read is dropped so a later
+// attempt can try again.
 const modalCache = new Map();
 export function fetchModalCached(ref) {
-  if (!modalCache.has(ref.modal_id)) modalCache.set(ref.modal_id, fetchModal(ref));
+  if (!modalCache.has(ref.modal_id)) {
+    const read = throttled(() => fetchModal(ref));
+    read.catch(() => modalCache.delete(ref.modal_id));
+    modalCache.set(ref.modal_id, read);
+  }
   return modalCache.get(ref.modal_id);
 }
 
+// Form cards read their modal ahead of a click. A long history can offer
+// dozens of forms, and reading them all at once trips the API's rate limit,
+// so these reads go two at a time and a failure gets one retry.
+const PREFETCH_CONCURRENCY = 2;
+const PREFETCH_RETRY_MS = 3000;
+let running = 0;
+let waiting = [];
+let generation = 0;
+
+function throttled(task) {
+  return new Promise((resolve, reject) => {
+    waiting.push({ run: () => task().then(resolve, reject), reject });
+    pump();
+  });
+}
+
+function pump() {
+  while (running < PREFETCH_CONCURRENCY && waiting.length) {
+    running += 1;
+    waiting.shift().run().finally(() => { running -= 1; pump(); });
+  }
+}
+
+export function prefetchModal(ref) {
+  const started = generation;
+  return fetchModalCached(ref).catch((e) => {
+    if (e.name === "AbortError" || started !== generation) throw e;
+    return new Promise((resolve) => setTimeout(resolve, PREFETCH_RETRY_MS)).then(() => {
+      if (started !== generation) throw new DOMException("Conversation changed.", "AbortError");
+      return fetchModalCached(ref);
+    });
+  });
+}
+
+// Leaving a conversation drops its queued reads, so the next conversation's
+// cards do not wait behind them, and its cached modals (ids are minted per read).
+export function cancelPrefetch() {
+  generation += 1;
+  const dropped = waiting;
+  waiting = [];
+  for (const item of dropped) item.reject(new DOMException("Conversation changed.", "AbortError"));
+  modalCache.clear();
+}
+
 export async function openModal(ref, label, sourceChip) {
-  current = { ...emptyModalState(), ref, chip: sourceChip || null };
-  $("modal-title").textContent = label || "Form";
+  current = { ...emptyModalState(), ref, chip: sourceChip || null, label: label || "Form" };
+  $("modal-title").textContent = current.label;
+  $("modal-kicker").hidden = true;
   $("modal-error").hidden = true;
   const form = $("modal-form");
   form.innerHTML = `<p class="modal-loading">Loading the form…</p>`;
@@ -36,7 +86,6 @@ export async function openModal(ref, label, sourceChip) {
   try {
     const modal = await fetchModal(ref);
     hooks.wire({ dir: "recv", label: `modal "${modal.title || ""}"`, detail: `${(modal.fields || []).length} fields` });
-    $("modal-title").textContent = modal.title || label || "Form";
     for (const f of modal.fields || []) {
       if (f.type === "CHOICE" && ((f.choice || {}).options || []).length) current.options.set(f.name, f.choice.options);
     }
@@ -51,8 +100,9 @@ function buildModalForm(modal) {
   const form = $("modal-form");
   form.innerHTML = "";
   current.fields = [];
+  const header = setModalHeading(modal);
   for (const f of modal.fields || []) {
-    if (f.visible === false) continue;
+    if (f.visible === false || f === header) continue;
     if (f.type === "DISPLAY") {
       form.appendChild(displayField(f.display || {}));
       continue;
@@ -65,17 +115,17 @@ function buildModalForm(modal) {
     if (f.required) span.innerHTML += ' <span class="req">*</span>';
     wrap.appendChild(span);
 
-    if (f.type === "FILE") {
-      // A FILE value is an upload id from the Files API, which this app does not implement.
+    // A FILE value is an upload id from the Files API; the attachments module uploads.
+    const control = f.type === "FILE" ? hooks.fileField?.(f, current.ref) : inputFor(f, wrap);
+    if (!control && f.type === "FILE") {
       const note = document.createElement("small");
       note.textContent = "File fields are not supported in this app.";
       wrap.appendChild(note);
       form.appendChild(wrap);
       continue;
     }
-    const control = inputFor(f, wrap);
     if (!control) continue;
-    const { input, getValue } = control;
+    const { input, getValue, pending } = control;
     if (f.read_only && input.tagName !== "DIV") input.disabled = true;
     if (f.triggers_refresh) input.addEventListener("change", refreshModal);
     wrap.appendChild(input);
@@ -85,8 +135,23 @@ function buildModalForm(modal) {
       wrap.appendChild(small);
     }
     form.appendChild(wrap);
-    current.fields.push({ field: f, getValue });
+    current.fields.push({ field: f, getValue, pending });
   }
+}
+
+// Forms often open with a DISPLAY header ("New request") under a generic
+// title ("File ticket"). Show one heading: the header, with the title above
+// it as a small label. Returns the header field it used, if any.
+function setModalHeading(modal) {
+  const title = (modal.title || current.label || "Form").trim();
+  const first = (modal.fields || []).find((f) => f.visible !== false);
+  const text = first?.type === "DISPLAY" && first.display?.text;
+  const heading = text && (text.style || "").toUpperCase() === "HEADER" ? text.text.replace(/\*\*/g, "").trim() : "";
+  const kicker = $("modal-kicker");
+  $("modal-title").textContent = heading || title;
+  kicker.textContent = title;
+  kicker.hidden = !heading || heading.toLowerCase() === title.toLowerCase();
+  return heading ? first : null;
 }
 
 function displayField(d) {
@@ -258,7 +323,8 @@ function restoreField(f, v) {
 export async function submitModal() {
   $("modal-error").hidden = true;
   const values = {};
-  for (const { field, getValue } of current.fields) {
+  for (const { field, getValue, pending } of current.fields) {
+    if (pending?.()) return showError(`Wait for the upload in "${field.label || field.name}" to finish.`);
     const v = getValue();
     if (v === null) {
       if (field.required && !field.read_only) return showError(`"${field.label || field.name}" is required.`);
@@ -295,6 +361,7 @@ export async function submitModal() {
 export function closeModal() {
   $("modal-backdrop").hidden = true;
   current = emptyModalState();
+  emit("app:modal-closed");
 }
 
 function showError(text) {

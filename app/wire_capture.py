@@ -223,7 +223,7 @@ def exchange(
         "method": request.method or "",
         "url": redact_url(request.url or ""),
         "request_headers": redact_headers(request.headers),
-        "request_body": format_body(request.body),
+        "request_body": format_request_body(request),
         "elapsed_ms": round((time.monotonic() - started) * 1000),
     }
     if error:
@@ -288,6 +288,63 @@ def redact_stream(body: str) -> str:
                 line = f"data: {json.dumps(redacted, ensure_ascii=False)}"
         lines.append(line)
     return redact_text("\n".join(lines))
+
+
+def format_request_body(request: requests.PreparedRequest) -> str:
+    content_type = request.headers.get("Content-Type", "")
+    if content_type.startswith("multipart/form-data") and isinstance(request.body, bytes):
+        return format_multipart(request.body, content_type)
+    if request.body is not None and not isinstance(request.body, (bytes, str)):
+        return "[streamed body, not captured]"
+    return format_body(request.body)
+
+
+MAX_MULTIPART_FIELD_BYTES = 4096
+
+
+def format_multipart(body: bytes, content_type: str) -> str:
+    """A multipart body with each part's headers, its field values, and file
+    parts replaced by their name and size, so no file bytes are shown.
+
+    The body is walked by offset: only header regions and short field values
+    are decoded, so a large file part is never copied.
+    """
+    boundary = re.search(r'boundary="?([^";]+)"?', content_type)
+    if not boundary:
+        return f"[multipart body, {len(body):,} bytes]"
+    delimiter = b"--" + boundary.group(1).encode("latin-1")
+    marker = delimiter.decode("latin-1")
+    lines = []
+    pos = body.find(delimiter)
+    while pos != -1:
+        start = pos + len(delimiter)
+        if body.startswith(b"--", start):
+            break
+        if body.startswith(b"\r\n", start):
+            start += 2
+        # A part ends at the CRLF before the next delimiter; that CRLF is framing, not content.
+        end = body.find(b"\r\n" + delimiter, start)
+        if end == -1:
+            end = len(body)
+        header_end = body.find(b"\r\n\r\n", start, end)
+        content_start = end if header_end == -1 else header_end + 4
+        headers = body[start:end if header_end == -1 else header_end].decode("utf-8", errors="replace").split("\r\n")
+        size = end - content_start
+        disposition = next((h for h in headers if h.lower().startswith("content-disposition")), "")
+        name = re.search(r'\bname="([^"]*)"', disposition)
+        filename = re.search(r'\bfilename="([^"]*)"', disposition)
+        if filename:
+            value = f"[file: {filename.group(1)}, {size:,} bytes]"
+        elif name and is_secret_name(name.group(1), form=True):
+            value = REDACTED
+        elif size > MAX_MULTIPART_FIELD_BYTES:
+            value = f"[value, {size:,} bytes]"
+        else:
+            value = body[content_start:end].decode("utf-8", errors="replace")
+        lines += [marker, *headers, "", value]
+        pos = body.find(delimiter, end)
+    lines.append(marker + "--")
+    return _cap(redact_text("\n".join(lines)), None)
 
 
 def format_body(body: Any) -> str:

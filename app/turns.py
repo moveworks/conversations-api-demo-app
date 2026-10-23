@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Sequence
 
 from moveworks_capi.client import ConversationsApiClient
 from moveworks_capi.conversations import create_conversation, list_messages, replies_after_input
 from moveworks_capi.errors import StreamClosedError
 from moveworks_capi.responses import Response, create_response, wait_for_completion
 
-from app.frames import sse_frame, wire
+from app.frames import sse_frame, turn_summary, wire
 from app.present import present_message
 
 try:  # Optional: delete app/streaming.py to submit and poll instead of streaming.
@@ -39,6 +39,7 @@ async def run_turn(
     callback_id: Optional[str],
     *,
     streaming: bool = True,
+    file_ids: Sequence[str] = (),
 ) -> AsyncIterator[bytes]:
     try:
         if not conversation_id:
@@ -55,6 +56,7 @@ async def run_turn(
                 async for frame in stream_turn(
                     client, conversation_id, text, callback_id,
                     response_ids.append, lambda: answered.append(True), lambda: completed.append(True),
+                    file_ids=file_ids,
                 ):
                     yield frame
             except StreamClosedError as exc:
@@ -80,9 +82,9 @@ async def run_turn(
                 for frame in _answer_frames(final):
                     yield frame
         else:
-            yield wire("send", "POST /responses", (text or "")[:120] if text else f"callback_id={callback_id[:40]}...")
+            yield wire("send", "POST /responses", turn_summary(text, callback_id, file_ids))
             submitted = await asyncio.to_thread(
-                lambda: create_response(client, conversation_id, text, callback_id=callback_id)
+                lambda: create_response(client, conversation_id, text, callback_id=callback_id, file_ids=file_ids)
             )
             yield wire("send", "GET /responses/{id}", "poll until complete")
             final = await asyncio.to_thread(

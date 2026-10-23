@@ -6,7 +6,7 @@ import asyncio
 import itertools
 import json
 import time
-from typing import AsyncIterator, Iterator, TypeVar
+from typing import AsyncIterator, Iterator, Optional, Sequence, TypeVar
 
 T = TypeVar("T")
 
@@ -26,6 +26,16 @@ def wire(direction: str, label: str, detail: str = "") -> bytes:
         "wire",
         {"id": f"w{next(_wire_ids)}", "t": round(time.time() % 100000, 2), "dir": direction, "label": label, "detail": detail[:220]},
     )
+
+
+def turn_summary(text: Optional[str], callback_id: Optional[str], file_ids: Sequence[str] = ()) -> str:
+    """The wire pane's one-line description of what a turn sends."""
+    files = f" + {len(file_ids)} file{'s' if len(file_ids) != 1 else ''}" if file_ids else ""
+    if text:
+        return text[:120] + files
+    if file_ids:
+        return files.removeprefix(" + ")
+    return f"callback_id={(callback_id or '')[:40]}..."
 
 
 async def to_async(sync_iter: Iterator[T]) -> AsyncIterator[T]:

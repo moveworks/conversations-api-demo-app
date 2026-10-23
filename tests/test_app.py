@@ -59,6 +59,20 @@ class TestSecurity:
         assert resp.status_code == 200
 
 
+class TestOptionalModules:
+    def test_the_attachments_module_loads(self):
+        # Fails while the starter pin lacks moveworks_capi.files (before 0.3.0), which
+        # would otherwise drop the attachments module without a word.
+        assert server.register_attachments is not None
+
+    def test_without_the_attachments_module_the_capability_check_is_404(self, monkeypatch):
+        # attachments.js keeps the composer and FILE fields unchanged on a 404.
+        monkeypatch.setattr(server, "register_attachments", None)
+        bare = TestClient(server.build_app(), base_url="http://127.0.0.1:8090")
+
+        assert bare.get("/api/files").status_code == 404
+
+
 class TestCaching:
     def test_page_and_static_files_revalidate(self, local):
         for path in ("/", "/static/js/chat.js", "/static/styles.css"):
@@ -449,6 +463,69 @@ def _frames(raw: list) -> list:
 
 
 class TestTurns:
+    def test_attached_files_ride_along_as_chat_files(self, monkeypatch):
+        done = Response(response_id="resp_1", conversation_id="conv_new", status="COMPLETED", outputs=[], raw={})
+        monkeypatch.setattr(turns, "wait_for_completion", lambda client, cid, rid, **kw: done)
+        monkeypatch.setattr(turns, "list_messages", lambda client, cid, limit: {"messages": []})
+        client = _FakeClient()
+
+        async def collect():
+            return [f async for f in turns.run_turn(client, "conv_1", None, None, streaming=False, file_ids=["file_a", "file_b"])]
+
+        asyncio.run(collect())
+
+        assert client.posts[0] == ("/rest/v1/conversations/conv_1/responses",
+                                   {"input": {"chat": {"files": [{"file_id": "file_a"}, {"file_id": "file_b"}]}}})
+
+    def test_streamed_turns_pass_file_ids_to_the_library(self, monkeypatch):
+        import app.streaming as streaming
+
+        calls = []
+
+        def fake_stream(client, cid, text, callback_id=None, file_ids=()):
+            calls.append((text, list(file_ids)))
+            return iter(())
+
+        monkeypatch.setattr(streaming, "stream_response", fake_stream)
+        monkeypatch.setattr(turns, "stream_turn", streaming.stream_turn)
+
+        async def collect():
+            return [f async for f in turns.run_turn(_FakeClient(), "conv_1", "what is this?", None, streaming=True, file_ids=["file_a"])]
+
+        asyncio.run(collect())
+
+        assert calls == [("what is this?", ["file_a"])]
+
+    def test_turn_summary_describes_files_only_turns(self):
+        from app.frames import turn_summary
+
+        assert turn_summary(None, None, ["file_a"]) == "1 file"
+        assert turn_summary(None, None, ["file_a", "file_b"]) == "2 files"
+        assert turn_summary("what is this?", None, ["file_a"]) == "what is this? + 1 file"
+        assert turn_summary(None, "cb_123", ()) == "callback_id=cb_123..."
+
+    def test_message_endpoint_limits_file_ids(self, local):
+        server.session.client = object()
+
+        assert local.post("/api/message", json={"file_ids": [f"file_{i}" for i in range(6)]}).status_code == 422
+        assert local.post("/api/message", json={"file_ids": [""]}).status_code == 422
+
+    def test_message_endpoint_accepts_files_without_text(self, local, monkeypatch):
+        seen = []
+
+        async def fake_run_turn(client, cid, text, callback_id, *, streaming=True, file_ids=()):
+            seen.append((text, callback_id, list(file_ids)))
+            yield b"event: completed\ndata: {}\n\n"
+
+        monkeypatch.setattr(server, "run_turn", fake_run_turn)
+        server.session.client = object()
+
+        assert local.post("/api/message", json={"file_ids": ["file_a"]}).status_code == 200
+        assert local.post("/api/message", json={"text": "hi"}).status_code == 200
+        assert local.post("/api/message", json={}).status_code == 400
+        assert local.post("/api/message", json={"callback_id": "cb", "file_ids": ["file_a"]}).status_code == 400
+        assert seen == [(None, None, ["file_a"]), ("hi", None, [])]
+
     def test_submit_and_poll_turn_yields_the_same_frames_as_streaming(self, monkeypatch):
         message = json.loads((FIXTURES / "smart_handoff_message.json").read_text())
         completed = Response(
@@ -503,7 +580,7 @@ class TestTurns:
                         outputs=[{"type": "MESSAGE", "message": message}], raw={})
         timeouts = []
 
-        async def cut_short_stream(client, cid, text, callback_id, on_response_id, on_answer, on_completed):
+        async def cut_short_stream(client, cid, text, callback_id, on_response_id, on_answer, on_completed, **kw):
             on_response_id("resp_1")
             yield b"event: wire\ndata: {}\n\n"
 
@@ -561,7 +638,7 @@ class TestTurns:
     def test_stream_closed_before_any_response_id_is_reported(self, monkeypatch):
         polled = []
 
-        async def closed_stream(client, cid, text, callback_id, on_response_id, on_answer, on_completed):
+        async def closed_stream(client, cid, text, callback_id, on_response_id, on_answer, on_completed, **kw):
             raise StreamClosedError("stream closed before a terminal event")
             yield b""
 
@@ -579,7 +656,7 @@ class TestTurns:
     def test_stream_error_event_is_reported_without_polling(self, monkeypatch):
         polled = []
 
-        async def failing_stream(client, cid, text, callback_id, on_response_id, on_answer, on_completed):
+        async def failing_stream(client, cid, text, callback_id, on_response_id, on_answer, on_completed, **kw):
             on_response_id("resp_1")
             yield b"event: wire\ndata: {}\n\n"
             raise StreamError("Something went wrong generating the answer", code="INTERNAL")
@@ -596,7 +673,7 @@ class TestTurns:
         assert polled == []
 
     def test_poll_timeout_is_reported_instead_of_ending_silently(self, monkeypatch):
-        async def cut_short_stream(client, cid, text, callback_id, on_response_id, on_answer, on_completed):
+        async def cut_short_stream(client, cid, text, callback_id, on_response_id, on_answer, on_completed, **kw):
             on_response_id("resp_1")
             yield b"event: wire\ndata: {}\n\n"
 

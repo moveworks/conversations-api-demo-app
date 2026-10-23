@@ -1,6 +1,6 @@
 # Moveworks Conversations API: demo app
 
-A demo chat surface for the [Moveworks Conversations API](https://docs.moveworks.com/api-reference/conversations-api), with streamed replies and a live reasoning trail, form cards inside the answer, motion, a protocol inspector, dark mode, and a panel that sends you a test proactive notification. Every API call goes through the `moveworks_capi` library from the [Conversations API starter](https://github.com/moveworks/conversations-api-starter), which this repo installs as a dependency.
+A demo chat surface for the [Moveworks Conversations API](https://docs.moveworks.com/api-reference/conversations-api), with streamed replies and a live reasoning trail, form cards inside the answer, file attachments, motion, a protocol inspector, dark mode, and a form that sends you a test proactive notification. Every API call goes through the `moveworks_capi` library from the [Conversations API starter](https://github.com/moveworks/conversations-api-starter), which this repo installs as a dependency.
 
 To build your own integration, fork the [starter](https://github.com/moveworks/conversations-api-starter). Its reference app covers the same API features with plain styling.
 
@@ -30,13 +30,13 @@ Requires Python 3.10 or later and a Moveworks instance with the Conversations AP
 
    On an older Python, the install in the next step fails with `File "setup.py" or "setup.cfg" not found`. Install Python 3.10 or later and create the virtual environment with it.
 
-3. Install the app as an editable install. This also installs the starter library from its `v0.2.0` tag, plus FastAPI and uvicorn.
+3. Install the app as an editable install. This also installs the starter library from its `v0.3.0` tag, plus FastAPI and uvicorn.
 
    ```bash
    pip install -e .
    ```
 
-4. Optional: to use the test notifications panel, copy the environment template and fill in the listener values (see [Testing proactive notifications](#testing-proactive-notifications)). Nothing else reads `.env`.
+4. Optional: to use the test notification form, copy the environment template and fill in the listener values (see [Testing proactive notifications](#testing-proactive-notifications)). Nothing else reads `.env`.
 
    ```bash
    cp .env.example .env
@@ -52,9 +52,11 @@ Requires Python 3.10 or later and a Moveworks instance with the Conversations AP
 
 6. On the connect screen, choose a data center and paste the chatbot's Bot Name and an HTTP Connector API key. The server holds the key in memory only, never on disk or in browser storage.
 
+To attach files, use the paperclip on the composer, or drop or paste files onto it. The [Files API](https://docs.moveworks.com/api-reference/alpha-files-api/files/upload-file) is in alpha and enabled per Moveworks instance; until it is, uploads fail with a note saying so. A message carries up to five files of up to 100 MB each, and uploaded files expire 24 hours after upload.
+
 Live agent replies show the agent's name and picture when the API sends `sender_info`, and "Live agent" otherwise. The starter's [API usage notes](https://github.com/moveworks/conversations-api-starter#api-usage-notes) list the ServiceNow and Moveworks settings that `sender_info` needs.
 
-The app runs locally with one connected Moveworks instance per process. It binds to `127.0.0.1`, has no login, and rejects requests with a non-local `Host`, cross-origin writes, and non-JSON writes, so other websites cannot drive it through your browser. Do not expose it on a network.
+The app runs locally with one connected Moveworks instance per process. It binds to `127.0.0.1`, has no login, and rejects requests with a non-local `Host`, cross-origin writes, and writes that are neither JSON nor a file upload, so other websites cannot drive it through your browser. Do not expose it on a network.
 
 To run the offline tests:
 
@@ -74,8 +76,9 @@ Each behavior below is an optional module. To remove one, delete the listed file
 | **Streaming** | Replies arrive progressively over server-sent events; the reasoning trail updates live, then collapses as the answer starts. | Submit the message, poll until complete, render the answer at once. `--no-stream` does the same at runtime. | `app/streaming.py`, `app/static/js/optional/thinking.js` + `.css` |
 | **Inline forms** | Removes the plain-text copy of offered forms from the answer (see `rendering.layout_message` in the starter) and places the form cards as one group after the paragraph that first mentions a form, before the closing question. | The answer renders as sent, including the plain-text copy, and form cards render below the answer. | `app/inline_forms.py`, `app/static/js/optional/inline-forms.js` + `.css` |
 | **Motion** | Tweens height changes so large answer snapshots glide instead of jumping, keeps the view pinned to the bottom while they run, fades new blocks in, staggers form cards. Respects `prefers-reduced-motion`. | Every change applies instantly. | `app/static/js/optional/motion.js` + `.css` |
-| **Wire pane** | A side pane that logs every API call and stream event. Click a call to expand the request and response as they crossed the network: method, URL, headers (collapsed until clicked), bodies, and the raw event stream of a streamed reply. Credentials are replaced with `[redacted]` on the server: the `Authorization` header, cookies, signatures, API keys, and any header, body field, or query parameter whose name contains token, secret, password, assertion, signature, API key, or credential, plus JWTs and bearer tokens anywhere in the text. Bodies over 64 KB are truncated. | No pane, no Wire button, and the server records no traffic. | `app/wire_capture.py`, `app/static/js/optional/wire.js` + `.css`, `tests/test_wire_capture.py` |
-| **Test notifications** | A panel at the top of the notifications drawer that sends you a proactive notification through an Agent Studio listener, then times its round trip back through the events API. Needs `MW_TEST_LISTENER_URL` (and `MW_TEST_LISTENER_SECRET` for a secured listener) in `.env`; see "Testing proactive notifications" below. | No panel; notifications arrive only when something else triggers them. | `app/test_notifications.py`, `app/static/js/optional/test-notify.js` + `.css` |
+| **Wire** | A Wire tab in the side panel that logs every API call and stream event. Click a call to expand the request and response as they crossed the network: method, URL, headers (collapsed until clicked), bodies, and the raw event stream of a streamed reply. Credentials are replaced with `[redacted]` on the server: the `Authorization` header, cookies, signatures, API keys, and any header, body field, or query parameter whose name contains token, secret, password, assertion, signature, API key, or credential, plus JWTs and bearer tokens anywhere in the text. Bodies over 64 KB are truncated. File uploads show each file part as its name and size. | No Wire tab or button, and the server records no traffic. | `app/wire_capture.py`, `app/static/js/optional/wire.js` + `.css`, `tests/test_wire_capture.py` |
+| **Attachments** | An attach button on the composer, plus drag and drop and paste. Each file uploads through the Files API as soon as it is picked and shows as a chip with its size and progress; Send waits for uploads to finish, and the turn carries the files as `chat.files`. Modal FILE fields accept uploads the same way. | No attach button, and modal FILE fields show as unsupported. | `app/attachments.py`, `app/static/js/optional/attachments.js` + `.css`, `tests/test_attachments.py` |
+| **Test notifications** | A form under the inbox on the Notifications tab that sends you a proactive notification through an Agent Studio listener, then times its round trip back through the events API. Needs `MW_TEST_LISTENER_URL` (and `MW_TEST_LISTENER_SECRET` for a secured listener) in `.env`; see "Testing proactive notifications" below. | No form; notifications arrive only when something else triggers them. | `app/test_notifications.py`, `app/static/js/optional/test-notify.js` + `.css` |
 
 ---
 
@@ -88,7 +91,7 @@ To send a test notification on demand, use an Agent Studio listener and a plugin
 3. **Plugin** with a system trigger on that listener, mapping `parsed_body.email` and `parsed_body.message` into the compound action.
 4. Put the listener URL (`https://api.moveworks.ai/webhooks/v1/listeners/{url id}/notify`), the secret, and your email in `.env` as `MW_TEST_LISTENER_URL`, `MW_TEST_LISTENER_SECRET`, and `MW_TEST_NOTIFY_EMAIL`.
 
-Then send a chat message in the app (delivery goes to the channel you used most recently), open the notifications drawer, and press Send. The panel reports the round trip time. A notification usually arrives in a new conversation titled "System Initiated Conversation". A secured listener accepts the request before verifying the signature, so a rejected signature appears only in the listener's logs in Agent Studio.
+Then send a chat message in the app (delivery goes to the channel you used most recently), open Notifications, expand "Send a test notification", and press Send. The form reports the round trip time. A notification usually arrives in a new conversation titled "System Initiated Conversation". A secured listener accepts the request before verifying the signature, so a rejected signature appears only in the listener's logs in Agent Studio.
 
 ---
 

@@ -19,8 +19,9 @@ hooks.thinking = (turn) => {
   el.className = "thinking open active";
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "thinking-summary";
-  btn.textContent = "THINKING";
+  btn.className = "thinking-summary disclosure";
+  btn.textContent = "Thinking";
+  btn.setAttribute("aria-expanded", "true");
   const wrap = document.createElement("div");
   wrap.className = "trail-wrap";
   wrap.style.maxHeight = "none";
@@ -32,11 +33,13 @@ hooks.thinking = (turn) => {
 
   const expand = () => {
     el.classList.add("open");
+    btn.setAttribute("aria-expanded", "true");
     wrap.style.maxHeight = wrap.scrollHeight + "px";
     setTimeout(() => { if (el.classList.contains("open")) wrap.style.maxHeight = "none"; }, 380);
   };
   // Collapsing instantly snaps the layout, so animate max-height instead.
   const collapse = () => {
+    btn.setAttribute("aria-expanded", "false");
     if (reducedMotion()) {
       el.classList.remove("open");
       wrap.style.maxHeight = "0px";

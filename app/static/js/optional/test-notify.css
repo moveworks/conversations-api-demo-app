@@ -1,20 +1,23 @@
-.test-notify {
-  display: flex; flex-direction: column; gap: 8px;
-  border: 1px dashed var(--line); border-radius: var(--radius); padding: 12px; margin: 4px 0 14px;
+.test-notify { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--line); }
+.tn-toggle {
+  display: inline-flex; align-items: center;
+  background: none; border: 0; padding: 0.25rem 0;
+  font-size: 0.8125rem; font-weight: 500; color: var(--ink-2);
 }
-.tn-title { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
-.tn-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); }
+.tn-toggle:hover { color: var(--ink); }
+.tn-form { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
+.tn-field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; color: var(--ink-2); }
 .tn-field input, .tn-field textarea, .tn-row select {
-  font: inherit; font-size: 13px; color: var(--ink); background: var(--panel);
-  border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+  font: inherit; font-size: 0.8125rem; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 0.5rem; padding: 0.375rem 0.5rem;
 }
 .tn-field input, .tn-field textarea { width: 100%; min-width: 0; }
 .tn-field textarea { resize: vertical; }
-.tn-row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
-.tn-warn { margin: 0; font-size: 12px; line-height: 1.45; color: var(--ink); border-left: 3px solid var(--ink-2); padding-left: 8px; }
-.tn-status { margin: 0; font-size: 12px; line-height: 1.45; color: var(--ink-2); min-height: 1em; }
+.tn-row { display: flex; gap: 0.5rem; align-items: center; justify-content: space-between; }
+.tn-warn { margin: 0; font-size: 0.75rem; line-height: 1.45; color: var(--ink); border-left: 3px solid var(--amber); padding-left: 0.5rem; }
+.tn-status { margin: 0; font-size: 0.75rem; line-height: 1.45; color: var(--ink-2); min-height: 1em; }
 .test-notify.unconfigured .tn-field, .test-notify.unconfigured .tn-row { opacity: 0.5; }
 .tn-badge {
-  display: inline-block; margin-top: 6px; font-family: var(--mono); font-size: 10px;
-  color: var(--live); border: 1px solid var(--live); border-radius: 999px; padding: 1px 7px;
+  display: inline-block; margin-top: 0.375rem; font-family: var(--mono); font-size: 0.6875rem;
+  color: var(--live); border: 1px solid var(--live); border-radius: 999px; padding: 1px 0.4375rem;
 }
