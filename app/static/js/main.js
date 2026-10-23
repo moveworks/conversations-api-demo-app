@@ -112,8 +112,11 @@ for (const chip of $("starter-prompts").querySelectorAll("button")) {
 applyTheme(localStorage.getItem("mw_capi_theme") ||
   (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
 
-$("connect-btn").addEventListener("click", connect);
-$("api-key").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+// A real form: Enter in any field connects, and password managers see it.
+$("connect-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  connect();
+});
 $("disconnect-btn").addEventListener("click", disconnect);
 $("new-conv-btn").addEventListener("click", startNewConversation);
 $("conv-archived-toggle").addEventListener("click", toggleArchivedView);

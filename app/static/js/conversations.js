@@ -258,7 +258,12 @@ function renderMessages(messages, id, into) {
   }
 }
 
+// Each open gets a number, so a slower earlier load of the same conversation
+// cannot render on top of a newer one.
+let openSeq = 0;
+
 export async function openConversation(id) {
+  const seq = ++openSeq;
   resetChat();
   cancelPrefetch();
   state.conversationId = id;
@@ -273,6 +278,7 @@ export async function openConversation(id) {
   hooks.wire({ dir: "send", label: "GET /conversations/{id}/messages" });
   try {
     const { messages, next_cursor: nextCursor } = await getJson(`/api/conversations/${id}/messages`);
+    if (seq !== openSeq) return; // opened again meanwhile
     hooks.wire({ dir: "recv", label: `messages x${messages.length}` });
     loading.remove();
     renderMessages(messages, id, chatLog);
@@ -280,6 +286,7 @@ export async function openConversation(id) {
     stickToBottom();
     scrollDown();
   } catch (e) {
+    if (seq !== openSeq) return;
     loading.replaceChildren();
     loading.className = "errline";
     loading.append(`Could not load this conversation. ${e.message || e} `);
@@ -324,6 +331,7 @@ function olderButton(id, cursor) {
 }
 
 export function startNewConversation() {
+  openSeq += 1; // a history load still in flight must not fill the new chat
   resetChat();
   cancelPrefetch();
   state.conversationId = null;

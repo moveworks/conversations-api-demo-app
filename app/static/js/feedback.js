@@ -31,7 +31,11 @@ export function renderFeedback(turn, data) {
 }
 
 function openComment(row, btn, data) {
-  if (row.querySelector(".fb-comment")) return;
+  // The box is the row's next sibling, not a child.
+  if (row.nextElementSibling?.classList.contains("fb-comment")) {
+    row.nextElementSibling.querySelector("textarea")?.focus();
+    return;
+  }
   const box = document.createElement("form");
   box.className = "fb-comment";
   const input = document.createElement("textarea");
@@ -47,9 +51,12 @@ function openComment(row, btn, data) {
   cancel.className = "action-chip subtle";
   cancel.textContent = "Cancel";
   cancel.addEventListener("click", () => box.remove());
-  box.addEventListener("submit", (e) => {
+  box.addEventListener("submit", async (e) => {
     e.preventDefault();
-    submit(row, btn, data, "unhelpful", input.value).then((ok) => { if (ok) box.remove(); });
+    if (send.disabled) return; // a second Enter while the first send is in flight
+    send.disabled = cancel.disabled = true;
+    if (await submit(row, btn, data, "unhelpful", input.value)) box.remove();
+    else send.disabled = cancel.disabled = false;
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); box.requestSubmit(); }
@@ -74,6 +81,8 @@ async function submit(row, btn, data, kind, comment) {
       additional_feedback: comment.trim() || null,
     }, "feedback failed");
     btn.classList.add("sent");
+    // A vote from either button settles the message, so close an open comment box.
+    if (row.nextElementSibling?.classList.contains("fb-comment")) row.nextElementSibling.remove();
     hooks.wire({ dir: "send", label: "POST .../feedback", detail: comment.trim() ? `${kind} + comment` : kind });
     toast(kind === "helpful" ? "Thanks, feedback recorded." : "Feedback recorded.");
     return true;

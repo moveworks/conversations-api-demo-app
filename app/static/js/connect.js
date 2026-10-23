@@ -3,6 +3,7 @@ import { $, emit } from "./dom.js";
 import { state } from "./state.js";
 import { chatLog, resetChat } from "./chat.js";
 import { loadConversations } from "./conversations.js";
+import { cancelPrefetch } from "./modals.js";
 import { closeNotifications, connectNotifications } from "./notifications.js";
 
 export async function boot() {
@@ -11,7 +12,8 @@ export async function boot() {
   for (const url of session.known_base_urls) select.appendChild(new Option(url, url));
   select.appendChild(new Option("Custom base URL…", "__custom__"));
   select.addEventListener("change", () => {
-    $("base-url-custom").hidden = select.value !== "__custom__";
+    // Disabled while hidden, so a half-typed URL cannot block the form's validation.
+    $("base-url-custom").hidden = $("base-url-custom").disabled = select.value !== "__custom__";
   });
   if (session.connected) enterApp(session.bot_name, session.base_url);
 }
@@ -56,6 +58,7 @@ export async function disconnect() {
   await postJson("/api/disconnect", {});
   closeNotifications();
   resetChat();
+  cancelPrefetch();
   state.conversationId = null;
   chatLog.replaceChildren();
   $("chat-empty").hidden = false;

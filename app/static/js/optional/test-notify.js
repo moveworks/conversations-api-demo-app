@@ -1,6 +1,6 @@
 /* Optional: send yourself a proactive notification, then watch it arrive.
 
-   The server half (app/test_notifications.py) POSTs to an Agent Studio
+   The server half (app/test_notifications.py) POSTs to a Tool Studio
    listener whose plugin notifies the recipient; the message then comes back
    through the events polling the app already does. This form sits, collapsed,
    under the inbox on the Notifications tab and times each round trip. Delete this
@@ -59,7 +59,7 @@ async function refresh() {
   if (!info.configured) {
     section.classList.add("unconfigured");
     warn.hidden = false;
-    warn.textContent = "Set MW_TEST_LISTENER_URL in .env (an Agent Studio listener that notifies the recipient), then restart the app.";
+    warn.textContent = "Set MW_TEST_LISTENER_URL in .env (a Tool Studio listener that notifies the recipient), then restart the app.";
     sendBtn.disabled = true;
     return;
   }
@@ -93,7 +93,7 @@ panel.addEventListener("submit", async (e) => {
       if (!pending.includes(entry)) return;
       // A secured listener accepts the request before verifying the signature,
       // so a rejected signature appears only in the listener's logs.
-      status.textContent = "Nothing after 45 seconds. Either Slack or Teams was used more recently, so the notification went there, or the listener rejected the signature. Check the listener's logs in Agent Studio and MW_TEST_LISTENER_SECRET in .env.";
+      status.textContent = "Nothing after 45 seconds. Either Slack or Teams was used more recently, so the notification went there, or the listener rejected the signature. Check the listener's logs in Tool Studio and MW_TEST_LISTENER_SECRET in .env.";
     }, 45000);
     panel.message.value = defaultMessage();
   } catch (err) {

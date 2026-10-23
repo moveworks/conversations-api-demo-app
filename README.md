@@ -78,20 +78,20 @@ Each behavior below is an optional module. To remove one, delete the listed file
 | **Motion** | Tweens height changes so large answer snapshots glide instead of jumping, keeps the view pinned to the bottom while they run, fades new blocks in, staggers form cards. Respects `prefers-reduced-motion`. | Every change applies instantly. | `app/static/js/optional/motion.js` + `.css` |
 | **Wire** | A Wire tab in the side panel that logs every API call and stream event. Click a call to expand the request and response as they crossed the network: method, URL, headers (collapsed until clicked), bodies, and the raw event stream of a streamed reply. Credentials are replaced with `[redacted]` on the server: the `Authorization` header, cookies, signatures, API keys, and any header, body field, or query parameter whose name contains token, secret, password, assertion, signature, API key, or credential, plus JWTs and bearer tokens anywhere in the text. Bodies over 64 KB are truncated. File uploads show each file part as its name and size. | No Wire tab or button, and the server records no traffic. | `app/wire_capture.py`, `app/static/js/optional/wire.js` + `.css`, `tests/test_wire_capture.py` |
 | **Attachments** | An attach button on the composer, plus drag and drop and paste. Each file uploads through the Files API as soon as it is picked and shows as a chip with its size and progress; Send waits for uploads to finish, and the turn carries the files as `chat.files`. Modal FILE fields accept uploads the same way. | No attach button, and modal FILE fields show as unsupported. | `app/attachments.py`, `app/static/js/optional/attachments.js` + `.css`, `tests/test_attachments.py` |
-| **Test notifications** | A form under the inbox on the Notifications tab that sends you a proactive notification through an Agent Studio listener, then times its round trip back through the events API. Needs `MW_TEST_LISTENER_URL` (and `MW_TEST_LISTENER_SECRET` for a secured listener) in `.env`; see "Testing proactive notifications" below. | No form; notifications arrive only when something else triggers them. | `app/test_notifications.py`, `app/static/js/optional/test-notify.js` + `.css` |
+| **Test notifications** | A form under the inbox on the Notifications tab that sends you a proactive notification through a Tool Studio listener, then times its round trip back through the events API. Needs `MW_TEST_LISTENER_URL` (and `MW_TEST_LISTENER_SECRET` for a secured listener) in `.env`; see "Testing proactive notifications" below. | No form; notifications arrive only when something else triggers them. | `app/test_notifications.py`, `app/static/js/optional/test-notify.js` + `.css` |
 
 ---
 
 ## Testing proactive notifications
 
-To send a test notification on demand, use an Agent Studio listener and a plugin that ends in a `notify` step. Build them once per test Moveworks instance:
+To send a test notification on demand, use a Tool Studio listener and a plugin that ends in a `notify` step. Build them once per test Moveworks instance:
 
 1. **Compound action** with inputs `email` and `message`: a `mw.get_user_by_email` step, then `notify` with `recipient_id` set to that user's id and `message` set to the `message` input.
 2. **Listener** with signature verification: HMAC-SHA256 over the raw body, read from the `X-Signature` header, with a secret you generate. Unsecured listeners also work, limited to one request per 10 seconds per Moveworks instance.
 3. **Plugin** with a system trigger on that listener, mapping `parsed_body.email` and `parsed_body.message` into the compound action.
 4. Put the listener URL (`https://api.moveworks.ai/webhooks/v1/listeners/{url id}/notify`), the secret, and your email in `.env` as `MW_TEST_LISTENER_URL`, `MW_TEST_LISTENER_SECRET`, and `MW_TEST_NOTIFY_EMAIL`.
 
-Then send a chat message in the app (delivery goes to the channel you used most recently), open Notifications, expand "Send a test notification", and press Send. The form reports the round trip time. A notification usually arrives in a new conversation titled "System Initiated Conversation". A secured listener accepts the request before verifying the signature, so a rejected signature appears only in the listener's logs in Agent Studio.
+Then send a chat message in the app (delivery goes to the channel you used most recently), open Notifications, expand "Send a test notification", and press Send. The form reports the round trip time. A notification usually arrives in a new conversation titled "System Initiated Conversation". A secured listener accepts the request before verifying the signature, so a rejected signature appears only in the listener's logs in Tool Studio.
 
 ---
 
