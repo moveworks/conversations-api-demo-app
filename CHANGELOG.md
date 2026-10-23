@@ -4,6 +4,8 @@ All notable changes to this project are recorded here. The project is versioned 
 
 ## Unreleased
 
+- The screen-reader status line is fixed in place, so a long conversation cannot make the whole page scroll past the app.
+- A feedback call's row in the Wire tab expands to its request and response.
 - On connect, the first poll reads one page of events, sets the checkpoint to the newest event, and delivers only events from a few seconds before connect onward. It runs one poll interval after connect, so it does not compete with the connect check or the first conversation list read. A poll still running from a previous connection does not write into the new one.
 - A polled notification reaches the browser as soon as the poll returns, rather than at the stream's next heartbeat.
 - Feedback, modal, and conversation calls report any upstream failure as a 502 with an actionable hint, including the rate-limit hint, and finish cleanly if you disconnect mid-call.

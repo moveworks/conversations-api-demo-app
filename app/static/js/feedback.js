@@ -72,6 +72,9 @@ function openComment(row, btn, data) {
 
 async function submit(row, btn, data, kind, comment) {
   row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  // Log before the call: the server's record of it can arrive before the
+  // response, and it attaches only to a row that is already waiting.
+  hooks.wire({ dir: "send", label: "POST .../feedback", detail: comment.trim() ? `${kind} + comment` : kind });
   try {
     await postJson("/api/feedback", {
       conversation_id: data.conversation_id,
@@ -83,7 +86,6 @@ async function submit(row, btn, data, kind, comment) {
     btn.classList.add("sent");
     // A vote from either button settles the message, so close an open comment box.
     if (row.nextElementSibling?.classList.contains("fb-comment")) row.nextElementSibling.remove();
-    hooks.wire({ dir: "send", label: "POST .../feedback", detail: comment.trim() ? `${kind} + comment` : kind });
     toast(kind === "helpful" ? "Thanks, feedback recorded." : "Feedback recorded.");
     return true;
   } catch (e) {
