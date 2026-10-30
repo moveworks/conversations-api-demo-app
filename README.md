@@ -32,7 +32,7 @@ Requires Python 3.10 or later and a Moveworks instance with the Conversations AP
 
    On Windows, use `py` in place of `python3`, and activate with `.venv\Scripts\activate` in Command Prompt or `.venv\Scripts\Activate.ps1` in PowerShell. If PowerShell blocks the script, run `Set-ExecutionPolicy -Scope Process RemoteSigned` in that window first.
 
-3. Install the app as an editable install. This also installs the starter library from its `v0.4.0` tag, plus FastAPI and uvicorn.
+3. Install the app as an editable install. This also installs the starter library from its `v0.5.0` tag, plus FastAPI and uvicorn.
 
    ```bash
    pip install -e .

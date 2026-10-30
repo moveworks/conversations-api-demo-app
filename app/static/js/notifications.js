@@ -3,12 +3,14 @@ import { hooks } from "./hooks.js";
 import { renderMarkdown } from "./markdown.js";
 import { scrollDown } from "./scroll.js";
 import { state } from "./state.js";
-import { addTurn, renderAssistantMessage } from "./chat.js";
+import { addStatusLine, addTurn, renderAssistantMessage } from "./chat.js";
 import { openConversation } from "./conversations.js";
 import { closeRail, railShowing, toggleRail } from "./layout.js";
 
 let source = null;
 let unread = 0;
+// One consent can produce several AUTHORIZE events; the first marks completion.
+const authorizedConversations = new Set();
 
 export function connectNotifications() {
   closeNotifications();
@@ -25,14 +27,24 @@ export function connectNotifications() {
     // events on the SAME conversation after the response already completed.
     // Those belong in the thread; only other conversations' events are
     // notifications.
+    const status = statusText(data);
     if (data.conversation_id && data.conversation_id === state.conversationId) {
-      if (data.message?.message_id && state.shownMessageIds.has(data.message.message_id)) return;
+      if (!data.message) {
+        if (!status) return;
+        const line = addStatusLine(status);
+        hooks.notificationArrived(data, line);
+        hooks.wire({ dir: "recv", label: "event → chat (same conversation)", detail: status });
+        return;
+      }
+      if (data.message.message_id && state.shownMessageIds.has(data.message.message_id)) return;
       const turn = addTurn("assistant");
       renderAssistantMessage(turn, data.message, data.conversation_id);
       hooks.notificationArrived(data, turn);
       // Follow-ups land in the thread without a reply in flight, so announce them here.
-      $("reply-status").textContent = turn.querySelector(".bubble")?.textContent || "";
+      const spoken = turn.querySelector(".bubble")?.textContent || "";
       scrollDown();
+      if (status) addStatusLine(status, { announce: false });
+      $("reply-status").textContent = [spoken, status].filter(Boolean).join(" ");
       hooks.wire({ dir: "recv", label: "event → chat (same conversation)", detail: (data.text || "").slice(0, 80) });
       return;
     }
@@ -40,11 +52,11 @@ export function connectNotifications() {
     const item = document.createElement("div");
     item.className = "notif-item";
     const body = document.createElement("div");
-    renderMarkdown(body, data.text || "(no text)");
+    renderMarkdown(body, data.text || status || "(no text)");
     const meta = document.createElement("div");
     meta.className = "meta";
     const author = data.actor === "LIVE_AGENT" ? (data.message?.sender?.display_name || "Live agent") : ACTORS[data.actor] || "";
-    meta.textContent = [formatTime(data.created_at), author].filter(Boolean).join(" · ");
+    meta.textContent = [formatTime(data.created_at), author, data.message ? status : ""].filter(Boolean).join(" · ");
     item.append(body, meta);
     if (data.conversation_id) {
       // The body is rendered markdown and can hold links, so the item itself
@@ -62,7 +74,7 @@ export function connectNotifications() {
     }
     $("notif-list").prepend(item);
     hooks.notificationArrived(data, item);
-    hooks.wire({ dir: "recv", label: "event (poll)", detail: (data.text || "").slice(0, 80) });
+    hooks.wire({ dir: "recv", label: "event (poll)", detail: (data.text || status).slice(0, 80) });
     if (!railShowing("notifications")) {
       unread += 1;
       $("notif-badge").textContent = String(unread);
@@ -71,10 +83,27 @@ export function connectNotifications() {
   });
 }
 
+// Read from the event's category details, never from the message text.
+function statusText(data) {
+  if (data.live_agent_session_state === "ENDED") return "Live agent chat ended";
+  if (data.category !== "USER_CONSENT_AUTH") return "";
+  if (data.consent_operation_type === "AUTHORIZE") {
+    if (authorizedConversations.has(data.conversation_id)) return "";
+    authorizedConversations.add(data.conversation_id);
+    return "Account connected";
+  }
+  if (data.consent_operation_type === "REVOKE") {
+    authorizedConversations.delete(data.conversation_id);
+    return "Account disconnected";
+  }
+  return "";
+}
+
 export function closeNotifications() {
   if (source) source.close();
   source = null;
   unread = 0;
+  authorizedConversations.clear();
   $("notif-badge").hidden = true;
   setConnection("connecting");
 }
