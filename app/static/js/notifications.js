@@ -36,7 +36,11 @@ export function connectNotifications() {
         hooks.wire({ dir: "recv", label: "event → chat (same conversation)", detail: status });
         return;
       }
-      if (data.message.message_id && state.shownMessageIds.has(data.message.message_id)) return;
+      if (data.message.message_id && state.shownMessageIds.has(data.message.message_id)) {
+        // Already in the thread; the event's status is still news.
+        if (status) addStatusLine(status);
+        return;
+      }
       const turn = addTurn("assistant");
       renderAssistantMessage(turn, data.message, data.conversation_id);
       hooks.notificationArrived(data, turn);
