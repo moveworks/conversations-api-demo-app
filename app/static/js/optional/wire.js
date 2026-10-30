@@ -259,6 +259,12 @@ function renderExchange(ex, number, collapseBodies = false) {
   appendBreakable(url, ex.url || "");
   line.append(method, " ", url);
   request.body.appendChild(line);
+  const curl = curlFor(ex);
+  if (curl) {
+    const button = copyButton("copy as curl", curl);
+    button.title = "Copy as a curl command. Set MW_TOKEN to your API key before running it.";
+    request.el.querySelector(".wire-sec-title").append(" ", button);
+  }
   request.body.appendChild(headersBlock("Headers", ex.request_headers));
   if (ex.request_body) request.body.appendChild(block("Body", ex.request_body, { collapsed: collapseBodies }));
 
@@ -298,17 +304,11 @@ function headersBlock(title, headers) {
   return block(`${title} (${count})`, headerText(headers), { collapsed: true });
 }
 
-function block(title, text, { collapsed = false } = {}) {
-  const wrap = document.createElement("div");
-  wrap.className = "wire-block";
-  const head = document.createElement("div");
-  head.className = "wire-block-head";
-  const name = document.createElement(collapsed ? "button" : "span");
-  name.textContent = title;
+function copyButton(label, text) {
   const copy = document.createElement("button");
   copy.type = "button";
   copy.className = "wire-copy";
-  copy.textContent = "copy";
+  copy.textContent = label;
   copy.addEventListener("click", async (e) => {
     e.stopPropagation();
     try {
@@ -317,9 +317,53 @@ function block(title, text, { collapsed = false } = {}) {
     } catch {
       copy.textContent = "copy failed";
     }
-    setTimeout(() => { copy.textContent = "copy"; }, 1500);
+    setTimeout(() => { copy.textContent = label; }, 1500);
   });
-  head.append(name, copy);
+  return copy;
+}
+
+// Headers curl sets itself, or that only describe this client.
+const CURL_SKIPPED_HEADERS = new Set(["authorization", "user-agent", "content-length", "accept-encoding", "connection", "host"]);
+
+// The token stays out of the clipboard: the command reads it from $MW_TOKEN.
+// Only JSON bodies are rebuilt; a file upload needs the file itself, and a
+// redacted value would be sent as "[redacted]".
+function curlFor(ex) {
+  if (!ex.method || !ex.url || !/^https?:/.test(ex.url)) return null;
+  if (ex.url.includes("[redacted]") || (ex.request_body || "").includes("[redacted]")) return null;
+  const headers = ex.request_headers || {};
+  const sentAuthorization = Object.keys(headers).some((name) => name.toLowerCase() === "authorization");
+  const contentType = Object.entries(headers).find(([name]) => name.toLowerCase() === "content-type")?.[1] || "";
+  if (contentType.startsWith("multipart/") || (ex.request_body || "").startsWith("[streamed body")) return null;
+  const parts = ["curl"];
+  if (/text\/event-stream/.test(Object.values(headers).join(" "))) parts.push("-N");
+  if (ex.method !== "GET") parts.push(`-X ${ex.method}`);
+  parts.push(shellQuote(ex.url));
+  if (sentAuthorization) parts.push('-H "Authorization: Bearer $MW_TOKEN"');
+  for (const [name, value] of Object.entries(headers)) {
+    if (CURL_SKIPPED_HEADERS.has(name.toLowerCase()) || String(value).includes("[redacted]")) continue;
+    parts.push(`-H ${shellQuote(`${name}: ${value}`)}`);
+  }
+  if (ex.request_body) {
+    let body;
+    try { body = JSON.stringify(JSON.parse(ex.request_body)); } catch { return null; }
+    parts.push(`--data-raw ${shellQuote(body)}`);
+  }
+  return parts.join(" \\\n  ");
+}
+
+function shellQuote(text) {
+  return `'${String(text).replaceAll("'", "'\\''")}'`;
+}
+
+function block(title, text, { collapsed = false } = {}) {
+  const wrap = document.createElement("div");
+  wrap.className = "wire-block";
+  const head = document.createElement("div");
+  head.className = "wire-block-head";
+  const name = document.createElement(collapsed ? "button" : "span");
+  name.textContent = title;
+  head.append(name, copyButton("copy", text));
   const body = document.createElement("div");
   body.className = "wire-text";
   if (collapsed) {

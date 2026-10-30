@@ -30,7 +30,9 @@ Requires Python 3.10 or later and a Moveworks instance with the Conversations AP
 
    On an older Python, the install in the next step fails with `File "setup.py" or "setup.cfg" not found`. Install Python 3.10 or later and create the virtual environment with it.
 
-3. Install the app as an editable install. This also installs the starter library from its `v0.3.0` tag, plus FastAPI and uvicorn.
+   On Windows, use `py` in place of `python3`, and activate with `.venv\Scripts\activate` in Command Prompt or `.venv\Scripts\Activate.ps1` in PowerShell. If PowerShell blocks the script, run `Set-ExecutionPolicy -Scope Process RemoteSigned` in that window first.
+
+3. Install the app as an editable install. This also installs the starter library from its `v0.4.0` tag, plus FastAPI and uvicorn.
 
    ```bash
    pip install -e .
@@ -42,6 +44,8 @@ Requires Python 3.10 or later and a Moveworks instance with the Conversations AP
    cp .env.example .env
    ```
 
+   In Windows Command Prompt, use `copy` in place of `cp`.
+
 5. Start the app, then open http://127.0.0.1:8090.
 
    ```bash
@@ -51,6 +55,8 @@ Requires Python 3.10 or later and a Moveworks instance with the Conversations AP
    ```
 
 6. On the connect screen, choose a data center and paste the chatbot's Bot Name and an HTTP Connector API key. The server holds the key in memory only, never on disk or in browser storage.
+
+   If connecting fails with `CERTIFICATE_VERIFY_FAILED` on a network that inspects TLS traffic, set the `REQUESTS_CA_BUNDLE` environment variable in your shell to the path of a PEM file containing your company's root CA certificate and restart the app.
 
 To attach files, use the paperclip on the composer, or drop or paste files onto it. The [Files API](https://docs.moveworks.com/api-reference/alpha-files-api/files/upload-file) is in alpha and enabled per Moveworks instance; until it is, uploads fail with a note saying so. A message carries up to five files of up to 100 MB each, and uploaded files expire 24 hours after upload.
 
@@ -76,7 +82,7 @@ Each behavior below is an optional module. To remove one, delete the listed file
 | **Streaming** | Replies arrive progressively over server-sent events; the reasoning trail updates live, then collapses as the answer starts. | Submit the message, poll until complete, render the answer at once. `--no-stream` does the same at runtime. | `app/streaming.py`, `app/static/js/optional/thinking.js` + `.css` |
 | **Inline forms** | Removes the plain-text copy of offered forms from the answer (see `rendering.layout_message` in the starter) and places the form cards as one group after the paragraph that first mentions a form, before the closing question. | The answer renders as sent, including the plain-text copy, and form cards render below the answer. | `app/inline_forms.py`, `app/static/js/optional/inline-forms.js` + `.css` |
 | **Motion** | Tweens height changes so large answer snapshots glide instead of jumping, keeps the view pinned to the bottom while they run, fades new blocks in, staggers form cards. Respects `prefers-reduced-motion`. | Every change applies instantly. | `app/static/js/optional/motion.js` + `.css` |
-| **Wire** | A Wire tab in the side panel that logs every API call and stream event. Click a call to expand the request and response as they crossed the network: method, URL, headers (collapsed until clicked), bodies, and the raw event stream of a streamed reply. Credentials are replaced with `[redacted]` on the server: the `Authorization` header, cookies, signatures, API keys, and any header, body field, or query parameter whose name contains token, secret, password, assertion, signature, API key, or credential, plus JWTs and bearer tokens anywhere in the text. Bodies over 64 KB are truncated. File uploads show each file part as its name and size. | No Wire tab or button, and the server records no traffic. | `app/wire_capture.py`, `app/static/js/optional/wire.js` + `.css`, `tests/test_wire_capture.py` |
+| **Wire** | A Wire tab in the side panel that logs every API call and stream event. Click a call to expand the request and response as they crossed the network: method, URL, headers (collapsed until clicked), bodies, and the raw event stream of a streamed reply. Credentials are replaced with `[redacted]` on the server: the `Authorization` header, cookies, signatures, API keys, and any header, body field, or query parameter whose name contains token, secret, password, assertion, signature, API key, or credential, plus JWTs and bearer tokens anywhere in the text. Bodies over 64 KB are truncated. File uploads show each file part as its name and size. **copy as curl** copies a request as a curl command for bash or zsh that reads the API key from `$MW_TOKEN`. Uploads, bodies over 64 KB, and requests with redacted values have no curl command. | No Wire tab or button, and the server records no traffic. | `app/wire_capture.py`, `app/static/js/optional/wire.js` + `.css`, `tests/test_wire_capture.py` |
 | **Attachments** | An attach button on the composer, plus drag and drop and paste. Each file uploads through the Files API as soon as it is picked and shows as a chip with its size and progress; Send waits for uploads to finish, and the turn carries the files as `chat.files`. Modal FILE fields accept uploads the same way. | No attach button, and modal FILE fields show as unsupported. | `app/attachments.py`, `app/static/js/optional/attachments.js` + `.css`, `tests/test_attachments.py` |
 | **Test notifications** | A form under the inbox on the Notifications tab that sends you a proactive notification through a Tool Studio listener, then times its round trip back through the events API. Needs `MW_TEST_LISTENER_URL` (and `MW_TEST_LISTENER_SECRET` for a secured listener) in `.env`; see "Testing proactive notifications" below. | No form; notifications arrive only when something else triggers them. | `app/test_notifications.py`, `app/static/js/optional/test-notify.js` + `.css` |
 

@@ -82,6 +82,7 @@ export async function openModal(ref, label, sourceChip) {
   const form = $("modal-form");
   form.innerHTML = `<p class="modal-loading">Loading the form…</p>`;
   $("modal-backdrop").hidden = false;
+  setBackgroundInert(true);
   $("modal-close").focus();
   hooks.wire({ dir: "send", label: "GET .../modals/{id}" });
   try {
@@ -362,9 +363,18 @@ export async function submitModal() {
 export function closeModal() {
   const opener = current.chip;
   $("modal-backdrop").hidden = true;
+  setBackgroundInert(false);
   current = emptyModalState();
   if (opener?.isConnected && !opener.disabled) opener.focus();
   emit("app:modal-closed");
+}
+
+// Keeps Tab and screen readers inside the open form. The toast stays outside
+// so errors from background work are still announced.
+function setBackgroundInert(inert) {
+  for (const el of $("app").children) {
+    if (el.id !== "modal-backdrop" && el.id !== "toast") el.inert = inert;
+  }
 }
 
 function showError(text) {

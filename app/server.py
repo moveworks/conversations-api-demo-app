@@ -451,6 +451,8 @@ async def _notifications_sse(request: Request) -> AsyncIterator[bytes]:
                 yield event
                 continue
             message = (event.raw.get("event_payload") or {}).get("message") or {}
+            if not message:
+                continue  # nothing to show in the list
             yield sse_frame(
                 "notification",
                 {
@@ -461,7 +463,7 @@ async def _notifications_sse(request: Request) -> AsyncIterator[bytes]:
                     "text": present_notification_text(event.content_text),
                     # The whole message, so a same-conversation follow-up keeps
                     # its buttons, sources, feedback, and live agent attribution.
-                    "message": await asyncio.to_thread(present_message, message) if message else None,
+                    "message": await asyncio.to_thread(present_message, message),
                 },
             )
     finally:
