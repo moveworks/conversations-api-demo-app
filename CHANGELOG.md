@@ -4,6 +4,11 @@ All notable changes to this project are recorded here. The project is versioned 
 
 ## Unreleased
 
+- Built on `moveworks-capi-starter` 0.4.0. Source snippets show citation bodies sent as plain text or CommonMark, not only markdown.
+- Each request in the Wire tab has **copy as curl**, which copies the call as a curl command that reads the API key from `$MW_TOKEN`.
+- Events that carry no message are left out of the notifications list.
+- While a form is open, the rest of the page is inert, so Tab and screen readers stay inside the form.
+- README: Windows commands for the virtual environment and the `.env` copy, and `REQUESTS_CA_BUNDLE` for networks that inspect TLS traffic.
 - The screen-reader status line is fixed in place, so a long conversation cannot make the whole page scroll past the app.
 - A feedback call's row in the Wire tab expands to its request and response.
 - On connect, the first poll reads one page of events, sets the checkpoint to the newest event, and delivers only events from a few seconds before connect onward. It runs one poll interval after connect, so it does not compete with the connect check or the first conversation list read. A poll still running from a previous connection does not write into the new one.

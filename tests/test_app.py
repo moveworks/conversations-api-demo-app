@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, AsyncGenerator, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +14,7 @@ import app.present as present
 import app.server as server
 import app.turns as turns
 from moveworks_capi.errors import RateLimitedError, RequestRejectedError, StreamClosedError, StreamError
+from moveworks_capi.notifications import Event
 from moveworks_capi.responses import Response
 from moveworks_capi.streaming import ResponseCreated
 from tests.conftest import PORTAL_REDIRECTS
@@ -812,3 +813,34 @@ class TestDispatch:
             return await asyncio.wait_for(queue.get(), timeout=1.0)
 
         assert asyncio.run(scenario()) == "evt"
+
+
+class TestNotifications:
+    def test_events_without_a_message_are_left_out_of_the_list(self):
+        def event(event_id: str, payload: dict) -> Event:
+            return Event.from_json({
+                "event_id": event_id, "conversation_id": "conv_1",
+                "created_at": "2026-10-30T12:00:00Z", "event_payload": payload,
+            })
+
+        class OpenRequest:
+            async def is_disconnected(self) -> bool:
+                return False
+
+        async def scenario() -> list:
+            stream = cast(AsyncGenerator, server._notifications_sse(cast(Any, OpenRequest())))
+            frames = [await anext(stream)]
+            queue = server.session.event_subscribers[-1]
+            queue.put_nowait(event("evt_1", {"type": "SOME_FUTURE_EVENT"}))
+            queue.put_nowait(event("evt_2", {"type": "MESSAGE_EVENT", "message": {
+                "actor": "ASSISTANT", "message_id": "msg_1",
+                "content": {"type": "PLAIN_TEXT", "plain_text": {"text": "Your laptop has shipped."}},
+            }}))
+            frames.append(await anext(stream))
+            await stream.aclose()
+            return frames
+
+        frames = _frames(asyncio.run(scenario()))
+
+        assert [name for name, _ in frames] == ["hello", "notification"]
+        assert frames[1][1]["event_id"] == "evt_2"

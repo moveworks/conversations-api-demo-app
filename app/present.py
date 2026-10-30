@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from moveworks_capi.responses import message_actions
 from moveworks_capi.rendering import (
+    citation_body,
     citation_label,
     citation_summary,
     clean_label,
@@ -124,7 +125,7 @@ def present_sources(message: Dict[str, Any]) -> List[Dict[str, str]]:
             continue
         seen.add((title, url))
         attributes = {a.get("key"): a.get("value") for a in display.get("attributes") or []}
-        body = ((display.get("body") or {}).get("markdown_text") or {}).get("text") or ""
+        body = citation_body(citation)
         sources.append({
             "title": title or url or "Source",
             "url": url,
