@@ -4,7 +4,8 @@ All notable changes to this project are recorded here. The project is versioned 
 
 ## Unreleased
 
-- Built on `moveworks-capi-starter` 0.4.0. Source snippets show citation bodies sent as plain text or CommonMark, not only markdown.
+- Built on `moveworks-capi-starter` 0.5.0, which reads an event's `category` and its live agent and consent details. Source snippets show citation bodies sent as plain text or CommonMark, not only markdown.
+- When a live agent chat ends in the open conversation, the thread shows "Live agent chat ended", whether or not the event carries a message. Consent results read from the event's details show as "Account connected" (the first `AUTHORIZE` in a conversation since its last `REVOKE`) or "Account disconnected": a line in the open thread, or a label in the notifications list.
 - Each request in the Wire tab has **copy as curl**, which copies the call as a curl command that reads the API key from `$MW_TOKEN`.
 - Events that carry no message are left out of the notifications list.
 - While a form is open, the rest of the page is inert, so Tab and screen readers stay inside the form.
